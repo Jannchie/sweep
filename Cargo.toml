@@ -1,0 +1,8 @@
+[workspace]
+resolver = "3"
+members = ["sweep-scan"]
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
