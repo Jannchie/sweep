@@ -6,6 +6,7 @@
 //!
 //! [`Scan::start`] 在后台线程扫描，进度通过共享的 [`Progress`] 读取，可随时取消。
 
+pub mod i18n;
 pub mod mft;
 pub mod system;
 pub mod tree;
@@ -56,9 +57,9 @@ pub enum Engine {
 impl Engine {
     pub fn label(self) -> &'static str {
         match self {
-            Engine::Auto => "自动",
-            Engine::Mft => "读取 MFT",
-            Engine::Walk => "遍历目录",
+            Engine::Auto => t!("自动", "Automatic", "自動"),
+            Engine::Mft => t!("读取 MFT", "MFT read", "MFT 読み取り"),
+            Engine::Walk => t!("遍历目录", "Folder walk", "フォルダー走査"),
         }
     }
 }
@@ -68,8 +69,8 @@ pub struct Outcome {
     /// 实际使用的方式（Auto 会解析成 Mft 或 Walk）。
     pub engine: Engine,
     pub elapsed: Duration,
-    /// 例如"读取 MFT 失败，已改用目录遍历"。
-    pub note: Option<String>,
+    /// 读取 MFT 失败、已改用目录遍历时，MFT 那边的错误。
+    pub mft_fallback: Option<String>,
 }
 
 /// 规范化扫描目标：`c:` → `C:\`，去掉多余的结尾反斜杠。
@@ -106,9 +107,14 @@ pub fn scan(
     let mft_possible = is_volume_root(&target)
         && system::fs_name(&target).as_deref() == Some("NTFS")
         && system::is_elevated();
-    let mut note = None;
+    let mut mft_fallback = None;
     if engine == Engine::Mft && !mft_possible {
-        return Err("读取 MFT 需要以管理员身份运行，且目标是 NTFS 卷的根目录".into());
+        return Err(t!(
+            "读取 MFT 需要以管理员身份运行，且目标是 NTFS 卷的根目录",
+            "Reading the MFT requires administrator rights and the root of an NTFS volume",
+            "MFT の読み取りには管理者権限と NTFS ボリュームのルートが必要です"
+        )
+        .into());
     }
     if engine != Engine::Walk && mft_possible {
         match mft::scan(&target, by_alloc, progress, cancel) {
@@ -117,12 +123,12 @@ pub fn scan(
                     tree,
                     engine: Engine::Mft,
                     elapsed: started.elapsed(),
-                    note,
+                    mft_fallback,
                 });
             }
             Err(e) if engine == Engine::Mft || cancel.load(Ordering::Relaxed) => return Err(e),
             Err(e) => {
-                note = Some(format!("读取 MFT 失败（{e}），已改用目录遍历"));
+                mft_fallback = Some(e);
                 reset(progress);
             }
         }
@@ -136,8 +142,13 @@ pub fn scan(
         tree,
         engine: Engine::Walk,
         elapsed: started.elapsed(),
-        note,
+        mft_fallback,
     })
+}
+
+/// 取消扫描时返回的错误。
+pub fn cancelled() -> String {
+    t!("已取消", "Canceled", "キャンセルしました").into()
 }
 
 fn reset(p: &Progress) {

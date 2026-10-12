@@ -6,6 +6,7 @@
 //! 不进入重解析点（目录联接、符号链接），避免重复计算和死循环。
 //! 硬链接按文件 ID 去重：同一个文件只有第一个被扫到的名字计大小。
 
+use crate::{t, tf};
 use std::collections::HashSet;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -59,9 +60,19 @@ pub fn scan(
     progress: &Progress,
     cancel: &AtomicBool,
 ) -> Result<Tree, String> {
-    let meta = std::fs::metadata(root).map_err(|e| format!("无法访问 {root}：{e}"))?;
+    let meta = std::fs::metadata(root).map_err(|e| {
+        tf!(
+            "无法访问 {root}：{e}",
+            "Can't access {root}: {e}",
+            "{root} にアクセスできません: {e}"
+        )
+    })?;
     if !meta.is_dir() {
-        return Err(format!("{root} 不是文件夹"));
+        return Err(tf!(
+            "{root} 不是文件夹",
+            "{root} isn't a folder",
+            "{root} はフォルダーではありません"
+        ));
     }
     let threads = std::thread::available_parallelism()
         .map_or(8, |n| n.get())
@@ -80,9 +91,9 @@ pub fn scan(
     let root_path = long_path(root);
     pool.scope(|s| visit(s, &ctx, 0, root_path, None));
     if cancel.load(Ordering::Relaxed) {
-        return Err("已取消".into());
+        return Err(crate::cancelled());
     }
-    progress.set_current("正在汇总…".into());
+    progress.set_current(t!("正在汇总…", "Totaling…", "集計しています…").into());
     let mut tree = ctx.tree.into_inner().unwrap();
     tree.by_alloc = by_alloc;
     tree.finish();

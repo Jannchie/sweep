@@ -9,6 +9,7 @@
 
 pub mod record;
 
+use crate::{t, tf};
 use std::collections::HashMap;
 use std::fs::File;
 use std::os::windows::fs::{FileExt, OpenOptionsExt};
@@ -48,7 +49,12 @@ pub struct Geometry {
 
 pub fn parse_boot(b: &[u8]) -> Result<Geometry, String> {
     if b.len() < 512 || &b[3..11] != b"NTFS    " {
-        return Err("不是 NTFS 卷".into());
+        return Err(t!(
+            "不是 NTFS 卷",
+            "Not an NTFS volume",
+            "NTFS ボリュームではありません"
+        )
+        .into());
     }
     let sector = u16::from_le_bytes([b[0x0B], b[0x0C]]) as u64;
     // 每簇扇区数：大于 0x80 时表示 2 的 (256 - x) 次方（64 KB 以上的簇）。
@@ -69,7 +75,12 @@ pub fn parse_boot(b: &[u8]) -> Result<Geometry, String> {
     let mft_lcn = u64::from_le_bytes(b[0x30..0x38].try_into().unwrap());
     if !sector.is_power_of_two() || sector < 512 || cluster == 0 || !(256..=65536).contains(&record)
     {
-        return Err("NTFS 引导扇区参数异常".into());
+        return Err(t!(
+            "NTFS 引导扇区参数异常",
+            "Unexpected NTFS boot sector parameters",
+            "NTFS ブート セクターのパラメーターが不正です"
+        )
+        .into());
     }
     Ok(Geometry {
         sector,
@@ -123,10 +134,21 @@ impl Volume {
             .share_mode(FILE_SHARE_ALL)
             .custom_flags(FILE_FLAG_NO_BUFFERING)
             .open(format!(r"\\.\{letter}:"))
-            .map_err(|e| format!("无法打开卷 {letter}:（{e}）"))?;
+            .map_err(|e| {
+                tf!(
+                    "无法打开卷 {letter}:（{e}）",
+                    "Can't open volume {letter}: ({e})",
+                    "ボリューム {letter}: を開けません ({e})"
+                )
+            })?;
         let mut boot = AlignedBuf::new(ALIGN);
-        file.seek_read(boot.as_mut(), 0)
-            .map_err(|e| format!("无法读取引导扇区：{e}"))?;
+        file.seek_read(boot.as_mut(), 0).map_err(|e| {
+            tf!(
+                "无法读取引导扇区：{e}",
+                "Can't read the boot sector: {e}",
+                "ブート セクターを読み取れません: {e}"
+            )
+        })?;
         let geo = parse_boot(boot.as_mut())?;
         Ok(Self { file, geo })
     }
@@ -143,11 +165,19 @@ impl Volume {
 
 fn read_exact_at(file: &File, mut buf: &mut [u8], mut offset: u64) -> Result<(), String> {
     while !buf.is_empty() {
-        let n = file
-            .seek_read(buf, offset)
-            .map_err(|e| format!("读取卷失败（偏移 {offset}）：{e}"))?;
+        let n = file.seek_read(buf, offset).map_err(|e| {
+            tf!(
+                "读取卷失败（偏移 {offset}）：{e}",
+                "Volume read failed (offset {offset}): {e}",
+                "ボリュームの読み取りに失敗しました (オフセット {offset}): {e}"
+            )
+        })?;
         if n == 0 {
-            return Err(format!("读取卷时遇到意外的结尾（偏移 {offset}）"));
+            return Err(tf!(
+                "读取卷时遇到意外的结尾（偏移 {offset}）",
+                "Unexpected end of volume (offset {offset})",
+                "ボリュームが途中で終わっています (オフセット {offset})"
+            ));
         }
         buf = &mut buf[n..];
         offset += n as u64;
@@ -170,7 +200,12 @@ pub fn runs_to_extents(runs: &[Run], cluster: u64) -> Result<Vec<(u64, u64)>, St
     runs.iter()
         .map(|r| match r.lcn {
             Some(lcn) => Ok((lcn * cluster, r.clusters * cluster)),
-            None => Err("$MFT 含有稀疏段".to_string()),
+            None => Err(t!(
+                "$MFT 含有稀疏段",
+                "$MFT has a sparse run",
+                "$MFT にスパース領域があります"
+            )
+            .to_string()),
         })
         .collect()
 }
@@ -183,13 +218,23 @@ pub fn mft_layout(
     geo: &Geometry,
     read: impl Fn(u64, usize) -> Result<Vec<u8>, String>,
 ) -> Result<Layout, String> {
-    let bad = |e: record::Error| format!("$MFT 记录损坏：{e:?}");
+    let bad = |e: record::Error| {
+        tf!(
+            "$MFT 记录损坏：{e:?}",
+            "Corrupt $MFT record: {e:?}",
+            "$MFT レコードが壊れています: {e:?}"
+        )
+    };
     // 非常驻属性的全部内容（属性列表、位图），按自己的运行表读出并截到实际长度。
     let content = |a: &record::Attr| -> Result<Vec<u8>, String> {
         if let Some(v) = a.value() {
             return Ok(v.to_vec());
         }
-        let nr = a.non_resident().ok_or("属性头损坏")?;
+        let nr = a.non_resident().ok_or(t!(
+            "属性头损坏",
+            "Corrupt attribute header",
+            "属性ヘッダーが壊れています"
+        ))?;
         let runs = record::decode_runs(a.runs().unwrap_or_default()).map_err(bad)?;
         let mut bytes = Vec::new();
         for (off, len) in runs_to_extents(&runs, geo.cluster)? {
@@ -213,7 +258,11 @@ pub fn mft_layout(
         for a in record::attributes(rec, &h) {
             match a.type_code {
                 ATTR_DATA if !a.named => {
-                    let nr = a.non_resident().ok_or("$MFT 的 $DATA 不是非常驻属性")?;
+                    let nr = a.non_resident().ok_or(t!(
+                        "$MFT 的 $DATA 不是非常驻属性",
+                        "$MFT $DATA isn't non-resident",
+                        "$MFT の $DATA が非常駐属性ではありません"
+                    ))?;
                     if nr.lowest_vcn == 0 {
                         f.size = Some(nr.real);
                     }
@@ -247,14 +296,22 @@ pub fn mft_layout(
         f.pieces.sort_by_key(|p| p.0);
         let known: Vec<Run> = f.pieces.iter().flat_map(|p| p.1.clone()).collect();
         let extents = runs_to_extents(&known, geo.cluster)?;
-        let off = locate(&extents, geo.record, n).ok_or("$MFT 扩展记录不在已知范围内")?;
+        let off = locate(&extents, geo.record, n).ok_or(t!(
+            "$MFT 扩展记录不在已知范围内",
+            "$MFT extension record is out of range",
+            "$MFT 拡張レコードが範囲外です"
+        ))?;
         let mut rec = read(off, geo.record as usize)?;
         rec.truncate(geo.record as usize);
         record::apply_fixup(&mut rec).map_err(bad)?;
         take(&mut f, &rec)?;
     }
 
-    let size = f.size.ok_or("$MFT 没有 $DATA 属性")?;
+    let size = f.size.ok_or(t!(
+        "$MFT 没有 $DATA 属性",
+        "$MFT has no $DATA attribute",
+        "$MFT に $DATA 属性がありません"
+    ))?;
     f.pieces.sort_by_key(|p| p.0);
     let runs: Vec<Run> = f.pieces.into_iter().flat_map(|p| p.1).collect();
     let extents = runs_to_extents(&runs, geo.cluster)?;
@@ -306,7 +363,11 @@ pub fn scan(
         .chars()
         .next()
         .filter(|c| c.is_ascii_alphabetic())
-        .ok_or("MFT 扫描只支持带盘符的卷")?;
+        .ok_or(t!(
+            "MFT 扫描只支持带盘符的卷",
+            "MFT scanning needs a volume with a drive letter",
+            "MFT スキャンはドライブ文字のあるボリュームのみ対応しています"
+        ))?;
     let vol = Volume::open(letter)?;
     let geo = vol.geo;
 
@@ -319,8 +380,10 @@ pub fn scan(
     })?;
     let records = layout.size / geo.record;
     progress.total.store(layout.size, Ordering::Relaxed);
-    progress.set_current(format!(
+    progress.set_current(tf!(
         "正在读取 {letter}: 的主文件表（{} 条记录）",
+        "Reading the master file table of {letter}: ({} records)",
+        "{letter}: のマスター ファイル テーブルを読み取っています ({} レコード)",
         records
     ));
 
@@ -375,10 +438,17 @@ pub fn scan(
         drop(free_tx);
         let tree = build(root, records, by_alloc, item_rx, progress, cancel);
         for r in readers {
-            r.join().map_err(|_| "读线程异常退出".to_string())??;
+            r.join().map_err(|_| {
+                t!(
+                    "读线程异常退出",
+                    "A reader thread crashed",
+                    "読み取りスレッドが異常終了しました"
+                )
+                .to_string()
+            })??;
         }
         if cancel.load(Ordering::Relaxed) {
-            return Err("已取消".into());
+            return Err(crate::cancelled());
         }
         Ok(tree)
     })
@@ -667,7 +737,14 @@ fn build(
     if cancel.load(Ordering::Relaxed) {
         return tree;
     }
-    progress.set_current("正在建立目录结构…".into());
+    progress.set_current(
+        t!(
+            "正在建立目录结构…",
+            "Building the folder tree…",
+            "フォルダー構造を作成しています…"
+        )
+        .into(),
+    );
 
     // 挂到父目录下：父记录必须存在、是目录、序列号一致（否则是已删除目录留下的孤儿）。
     for (node, (parent, name)) in short_only {

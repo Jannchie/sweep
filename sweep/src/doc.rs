@@ -36,7 +36,8 @@ pub struct Doc {
     pub target: String,
     pub engine: Engine,
     pub elapsed: Duration,
-    pub note: Option<String>,
+    /// 读取 MFT 失败、改用目录遍历时 MFT 那边的错误。
+    pub mft_fallback: Option<String>,
     /// 数据版本：树每改一次加一。
     pub version: u64,
     pub expanded: HashSet<u32>,
@@ -89,7 +90,7 @@ impl Doc {
             target,
             engine: out.engine,
             elapsed: out.elapsed,
-            note: out.note,
+            mft_fallback: out.mft_fallback,
             version: 1,
             expanded: HashSet::from([root]),
             rows: Vec::new(),

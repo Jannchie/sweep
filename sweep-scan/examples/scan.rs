@@ -21,8 +21,8 @@ fn run(target: &str, engine: Engine) -> Tree {
     let r = t.node(t.root);
     let (ws, peak, private) = system::memory();
     println!("== {:?} {target}", out.engine);
-    if let Some(n) = &out.note {
-        println!("   note: {n}");
+    if let Some(e) = &out.mft_fallback {
+        println!("   mft failed, walked instead: {e}");
     }
     println!(
         "   time {:.2}s  nodes {} (live {})  files {}  dirs {}  size {}  alloc {}",

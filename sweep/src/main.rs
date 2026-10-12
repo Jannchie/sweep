@@ -705,8 +705,8 @@ impl App {
                 if self.elevated {
                     ui.label(faint("管理员".into()));
                 }
-                if let Some(n) = self.doc.as_ref().and_then(|d| d.note.clone()) {
-                    ui.label(faint(n));
+                if let Some(e) = self.doc.as_ref().and_then(|d| d.mft_fallback.as_deref()) {
+                    ui.label(faint(format!("读取 MFT 失败（{e}），已改用目录遍历")));
                 }
                 if self.doc.as_ref().is_some_and(|d| d.basis_busy()) {
                     ui.label(faint("正在按新的大小口径重新排序…".into()));
