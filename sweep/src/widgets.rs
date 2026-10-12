@@ -577,6 +577,36 @@ pub fn kpi(
     }
 }
 
+/// 开关。
+pub fn switch(ui: &mut Ui, on: &mut bool) -> Response {
+    let p = Palette::of(ui.ctx());
+    let (rect, mut resp) = ui.allocate_exact_size(vec2(36.0, 20.0), Sense::click());
+    if resp.clicked() {
+        *on = !*on;
+        resp.mark_changed();
+    }
+    let track = if *on { p.accent } else { p.track };
+    ui.painter()
+        .rect_filled(rect, CornerRadius::same(10), track);
+    if !*on {
+        ui.painter().rect_stroke(
+            rect,
+            CornerRadius::same(10),
+            Stroke::new(1.0, p.border),
+            egui::StrokeKind::Inside,
+        );
+    }
+    let x = if *on {
+        rect.right() - 10.0
+    } else {
+        rect.left() + 10.0
+    };
+    let knob = if *on { Color32::WHITE } else { p.muted };
+    ui.painter()
+        .circle_filled(pos2(x, rect.center().y), 6.5, knob);
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::icons_gen::Icon;

@@ -46,6 +46,7 @@ const USED = [
   ['Package', 'package'],
   ['Globe', 'globe'],
   ['Clock', 'clock'],
+  ['Download', 'download'],
 ]
 const STYLE = { radius: 2, weight: 'regular' }
 // 覆盖 12–40 设备像素：13–16pt 的图标在 100%–250% 缩放下都能取到对应尺寸。

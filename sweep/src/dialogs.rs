@@ -17,8 +17,8 @@ use crate::{fmt_bytes, fmt_count, n_items, widgets};
 const DANGER_FILL: Color32 = Color32::from_rgb(0x99, 0x1b, 0x1b);
 const DANGER_FILL_HOVER: Color32 = Color32::from_rgb(0x7f, 0x1d, 0x1d);
 /// 白字在其上 ≥ 7:1（AAA）。
-const PRIMARY_FILL: Color32 = Color32::from_rgb(0x9a, 0x34, 0x12);
-const PRIMARY_FILL_HOVER: Color32 = Color32::from_rgb(0x7c, 0x2d, 0x12);
+pub const PRIMARY_FILL: Color32 = Color32::from_rgb(0x9a, 0x34, 0x12);
+pub const PRIMARY_FILL_HOVER: Color32 = Color32::from_rgb(0x7c, 0x2d, 0x12);
 
 pub enum Decision {
     Confirm,
@@ -297,6 +297,7 @@ pub fn button(ui: &mut Ui, label: &str, kind: Kind, enabled: bool) -> egui::Resp
 #[derive(Clone, Copy, PartialEq)]
 pub enum ToastKind {
     Success,
+    Info,
     Error,
 }
 
@@ -320,6 +321,13 @@ impl Toast {
             title,
             detail,
             at: Instant::now(),
+        }
+    }
+
+    pub fn info(title: String, detail: Option<String>) -> Self {
+        Self {
+            kind: ToastKind::Info,
+            ..Self::ok(title, detail)
         }
     }
 
@@ -358,6 +366,7 @@ pub fn toasts(ctx: &egui::Context, toasts: &mut Vec<Toast>) {
     for (i, t) in toasts.iter().enumerate().rev().take(3) {
         let (glyph, accent) = match t.kind {
             ToastKind::Success => (Icon::CheckCircle, types::OK),
+            ToastKind::Info => (Icon::Download, p.accent),
             ToastKind::Error => (Icon::XCircle, p.danger),
         };
         let resp = egui::Area::new(Id::new(("toast", i)))
@@ -421,6 +430,17 @@ fn modal(
     width: f32,
     body: impl FnOnce(&mut Ui) -> Option<Decision>,
 ) -> Option<Decision> {
+    let (decision, closed) = modal_with(ctx, id, width, body);
+    decision.or(closed.then_some(Decision::Cancel))
+}
+
+/// [`modal`] 的通用版本：返回 `body` 的结果，以及用户是否点了遮罩或按了 Esc。
+pub fn modal_with<T>(
+    ctx: &egui::Context,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    width: f32,
+    body: impl FnOnce(&mut Ui) -> Option<T>,
+) -> (Option<T>, bool) {
     let p = Palette::of(ctx);
     let resp = egui::Modal::new(Id::new(id))
         .frame(dialog_frame(&p))
@@ -436,7 +456,7 @@ fn modal(
             body(ui)
         });
     let closed = resp.should_close();
-    resp.inner.or(closed.then_some(Decision::Cancel))
+    (resp.inner, closed)
 }
 
 fn title(ui: &mut Ui, glyph: Icon, color: Color32, text: &str) {

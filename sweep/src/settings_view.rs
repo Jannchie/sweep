@@ -9,9 +9,22 @@ use sweep_scan::{t, tf};
 
 use crate::settings::{Basis, EngineChoice, Language, Settings, ThemeChoice};
 use crate::theme::{Palette, semibold};
-use crate::widgets;
+use crate::update::Check;
+use crate::{dialogs, update_view, widgets};
 
-pub fn show(ui: &mut Ui, settings: &mut Settings, elevated: bool) {
+/// 设置页上需要由 App 处理的操作。
+pub enum SettingsAction {
+    CheckUpdate,
+    ShowUpdate,
+}
+
+pub fn show(
+    ui: &mut Ui,
+    settings: &mut Settings,
+    elevated: bool,
+    update: &Check,
+) -> Option<SettingsAction> {
+    let mut action = None;
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
@@ -140,13 +153,50 @@ pub fn show(ui: &mut Ui, settings: &mut Settings, elevated: bool) {
                                         .color(p.muted),
                                 );
                             });
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                ui.spacing_mut().item_spacing.x = 12.0;
+                                let available = matches!(update, Check::Available(_));
+                                let (label, kind) = if available {
+                                    (t!("查看更新", "View update", "更新を表示"), dialogs::Kind::Primary)
+                                } else {
+                                    (t!("检查更新", "Check for updates", "更新を確認"), dialogs::Kind::Secondary)
+                                };
+                                let enabled = !matches!(update, Check::Checking);
+                                if dialogs::button(ui, label, kind, enabled).clicked() {
+                                    action = Some(if available {
+                                        SettingsAction::ShowUpdate
+                                    } else {
+                                        SettingsAction::CheckUpdate
+                                    });
+                                }
+                                if let Some((text, color)) = update_view::check_status(ui, update) {
+                                    ui.add(
+                                        egui::Label::new(RichText::new(text).size(12.0).color(color))
+                                            .truncate(),
+                                    );
+                                }
+                            });
                         });
                         ui.add_space(16.0);
+                        divider(ui);
+                        row(
+                            ui,
+                            t!("自动检查更新", "Check for updates automatically", "更新を自動的に確認する"),
+                            t!(
+                                "启动时和每天检查一次 GitHub 上的新版本。只有在你确认后才会安装。",
+                                "Checks GitHub for a new version at startup and once a day. Updates are installed only when you confirm.",
+                                "起動時と 1 日 1 回、GitHub で新しいバージョンを確認します。更新は確認した後にのみインストールされます。"
+                            ),
+                            |ui| {
+                                widgets::switch(ui, &mut settings.auto_update);
+                            },
+                        );
                     });
                     ui.add_space(16.0);
                 });
             });
         });
+    action
 }
 
 fn group(ui: &mut Ui, title: &str, body: impl FnOnce(&mut Ui)) {

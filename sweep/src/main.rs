@@ -19,9 +19,12 @@ mod start_view;
 mod theme;
 mod titlebar;
 mod treemap;
+mod update;
+mod update_view;
 mod widgets;
 
 use std::collections::VecDeque;
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 
@@ -45,7 +48,7 @@ fn main() -> eframe::Result {
             .with_inner_size([1280.0, 820.0])
             .with_min_inner_size([980.0, 640.0])
             // 先给一个图标，免得出现 eframe 默认的 egui 标志；窗口建好后 titlebar 会换成 exe 资源里的多尺寸图标。
-            .with_icon(std::sync::Arc::new(egui::IconData {
+            .with_icon(Arc::new(egui::IconData {
                 rgba: brand_art::brand_rgba(64),
                 width: 64,
                 height: 64,
@@ -141,6 +144,7 @@ pub enum Action {
 enum Modal {
     Delete(DeleteRequest),
     EmptyRecycleBin(u64),
+    Update(Arc<update::Release>),
 }
 
 /// 后台任务的结果。
@@ -190,7 +194,29 @@ struct App {
     passes: VecDeque<Instant>,
     /// 上一帧显示的页面，用来发现切到了清理页。
     last_view: View,
+    updater: update::Updater,
+    /// 本帧开始时读到的更新状态。
+    update: update::Status,
+    /// 已经弹过通知的新版本。
+    update_announced: Option<String>,
+    /// 新版本已启动，正在关闭本窗口。
+    restarting: bool,
 }
+
+/// 本程序在 GitHub 上的发布信息。
+const UPDATE_CONFIG: update::Config = update::Config {
+    owner: "Jannchie",
+    repo: "sweep",
+    current_version: env!("CARGO_PKG_VERSION"),
+    asset_pattern: "sweep-{tag}-windows-x64.exe",
+    checksums: "SHA256SUMS.txt",
+    // 与 installer/sweep.iss 的 AppId 对应。
+    installer: Some(update::InstallerConfig {
+        asset_pattern: "sweep-{tag}-windows-x64-setup.exe",
+        uninstall_key: "{9B83B075-7D2D-49D9-8547-11D6640C0858}_is1",
+        args: "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /LAUNCH=1",
+    }),
+};
 
 impl App {
     fn new(ctx: &egui::Context) -> Self {
@@ -199,6 +225,12 @@ impl App {
         apply_language(ctx, settings.language);
         egui_extras::install_image_loaders(ctx);
         ctx.set_theme(settings.theme.preference());
+        update::cleanup_old(&UPDATE_CONFIG);
+        let updater = {
+            let ctx = ctx.clone();
+            update::Updater::new(UPDATE_CONFIG, move || ctx.request_repaint())
+        };
+        updater.start(settings.auto_update);
         let mut app = Self {
             view: View::Disks,
             settings,
@@ -220,6 +252,10 @@ impl App {
             focus_search: false,
             passes: VecDeque::new(),
             last_view: View::Disks,
+            updater,
+            update: update::Status::default(),
+            update_announced: None,
+            restarting: false,
         };
         app.load_volumes(ctx);
         // 命令行参数作为扫描目标，例如 `sweep D:\data`。
@@ -607,6 +643,7 @@ impl App {
                     }
                 });
             }
+            Modal::Update(_) => {}
             Modal::EmptyRecycleBin(_) => {
                 self.spawn(ctx, || Job::RecycleEmptied(os::empty_recycle_bin()));
             }
@@ -956,11 +993,83 @@ impl App {
             if resp.clicked() {
                 self.view = View::Settings;
             }
+            if let Some(release) = self.pending_update() {
+                ui.add_space(6.0);
+                let resp = update_view::title_pill(ui, &release.version);
+                holes.push(resp.rect);
+                if resp.clicked() {
+                    self.modal = Some(Modal::Update(release));
+                }
+            }
         });
         if custom {
             let caption =
                 egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(f32::INFINITY, row.bottom()));
             titlebar::set_layout(ui.ctx(), caption, holes, max_button);
+        }
+    }
+
+    /// 有新版本且用户没有跳过它。
+    fn pending_update(&self) -> Option<Arc<update::Release>> {
+        match &self.update.check {
+            update::Check::Available(r) if r.version != self.settings.skipped_version => {
+                Some(r.clone())
+            }
+            _ => None,
+        }
+    }
+
+    /// 读取更新状态：新版本第一次出现时通知一次；新进程已启动时关闭窗口。
+    fn poll_update(&mut self, ctx: &egui::Context) {
+        self.update = self.updater.status();
+        if let Some(r) = self.pending_update()
+            && self.update_announced.as_deref() != Some(r.version.as_str())
+        {
+            self.update_announced = Some(r.version.clone());
+            self.toasts.push(Toast::info(
+                tf!(
+                    "Sweep {} 可用",
+                    "Sweep {} is available",
+                    "Sweep {} を利用できます",
+                    r.version
+                ),
+                Some(
+                    t!(
+                        "点击标题栏中的“新版本”查看更新内容。",
+                        "Click “Update” in the title bar to see what's new.",
+                        "タイトル バーの「新しいバージョン」をクリックすると、更新内容を確認できます。"
+                    )
+                    .into(),
+                ),
+            ));
+        }
+        if matches!(self.update.install, update::Install::Restarting) && !self.restarting {
+            self.restarting = true;
+            if let Some(s) = &self.scan {
+                s.cancel();
+            }
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+    }
+
+    fn apply_update_choice(&mut self, release: Arc<update::Release>, choice: update_view::Choice) {
+        use update_view::Choice;
+        match choice {
+            Choice::Install => self.updater.install(release),
+            Choice::Later => {
+                self.updater.dismiss_install_error();
+                self.modal = None;
+            }
+            Choice::Skip => {
+                self.updater.dismiss_install_error();
+                self.settings.skipped_version = release.version.clone();
+                self.settings.save();
+                self.modal = None;
+            }
+            Choice::OpenPage => {
+                os::open(&release.page_url);
+                self.modal = None;
+            }
         }
     }
 
@@ -1108,6 +1217,7 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         self.poll_scan(&ctx);
         self.poll_jobs(&ctx);
+        self.poll_update(&ctx);
         self.icons.poll(&ctx);
         self.treemap.poll(&ctx);
         if let Some(d) = &mut self.doc {
@@ -1210,10 +1320,29 @@ impl eframe::App for App {
             }
             View::Settings => {
                 let before = self.settings.clone();
-                central.show(ui, |ui| {
-                    settings_view::show(ui, &mut self.settings, self.elevated)
-                });
+                let action = central
+                    .show(ui, |ui| {
+                        settings_view::show(
+                            ui,
+                            &mut self.settings,
+                            self.elevated,
+                            &self.update.check,
+                        )
+                    })
+                    .inner;
+                match action {
+                    Some(settings_view::SettingsAction::CheckUpdate) => self.updater.check_now(),
+                    Some(settings_view::SettingsAction::ShowUpdate) => {
+                        if let update::Check::Available(r) = &self.update.check {
+                            self.modal = Some(Modal::Update(r.clone()));
+                        }
+                    }
+                    None => {}
+                }
                 if self.settings != before {
+                    if self.settings.auto_update != before.auto_update {
+                        self.updater.set_auto(self.settings.auto_update);
+                    }
                     if self.settings.language != before.language {
                         apply_language(&ctx, self.settings.language);
                     }
@@ -1242,8 +1371,20 @@ impl eframe::App for App {
             actions.extend(a);
         }
 
+        let mut update_choice = None;
         if let Some(modal) = &self.modal {
             let decision = match modal {
+                Modal::Update(r) => {
+                    update_choice = update_view::dialog(
+                        &ctx,
+                        "Sweep",
+                        env!("CARGO_PKG_VERSION"),
+                        r,
+                        &self.update.install,
+                    )
+                    .map(|c| (r.clone(), c));
+                    None
+                }
                 Modal::Delete(req) => dialogs::confirm_delete(&ctx, req),
                 Modal::EmptyRecycleBin(size) => dialogs::confirm(
                     &ctx,
@@ -1272,6 +1413,9 @@ impl eframe::App for App {
                 Some(Decision::Cancel) => self.modal = None,
                 None => {}
             }
+        }
+        if let Some((release, choice)) = update_choice {
+            self.apply_update_choice(release, choice);
         }
         dialogs::toasts(&ctx, &mut self.toasts);
 
