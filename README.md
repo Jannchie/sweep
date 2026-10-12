@@ -8,7 +8,7 @@
   <img src="docs/screenshot.zh.png" alt="Sweep 分析页">
 </p>
 
-Sweep 是 Windows 上的磁盘空间分析工具，用目录树、矩形树图和文件类型统计找出占用空间的文件，使用 Rust 与 egui 原生实现，单个 exe，无需安装。界面支持简体中文、英文与日文，默认跟随 Windows 显示语言，可在「设置 → 外观」中切换。
+Sweep 是 Windows 上的磁盘空间分析工具，用目录树、矩形树图和文件类型统计找出占用空间的文件，使用 Rust 与 egui 原生实现，提供安装程序与免安装的单个 exe。界面支持简体中文、英文与日文，默认跟随 Windows 显示语言，可在「设置 → 外观」中切换。
 
 与 WinDirStat 相比：
 
@@ -21,7 +21,12 @@ Sweep 是 Windows 上的磁盘空间分析工具，用目录树、矩形树图�
 
 ## 安装
 
-从 [Releases](https://github.com/Jannchie/sweep/releases) 下载 `sweep-<版本>-windows-x64.exe` 后直接运行。系统要求 Windows 10 或 11（x64）。
+从 [Releases](https://github.com/Jannchie/sweep/releases) 下载以下任一文件。系统要求 Windows 10 或 11（x64）。
+
+- **安装程序（推荐）**：`sweep-<版本>-windows-x64-setup.exe`，为所有用户安装到 `C:\Program Files\Sweep`，并创建开始菜单快捷方式。可在「设置 → 应用」中卸载。
+- **便携版**：`sweep-<版本>-windows-x64.exe`，下载后直接运行，不写入安装信息。
+
+Sweep 会在启动时及每天检查一次新版本，发现后在标题栏中提示，经确认后才下载、校验并安装；可在「设置 → 关于」中关闭自动检查。
 
 ## 快速上手
 

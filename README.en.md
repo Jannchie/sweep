@@ -8,7 +8,7 @@
   <img src="docs/screenshot.en.png" alt="Sweep analysis page">
 </p>
 
-Sweep is a disk usage analyzer for Windows that finds what takes up space with a folder tree, a treemap and file type statistics. It is written natively in Rust with egui, ships as a single executable and needs no installation. The interface is available in English, Simplified Chinese and Japanese; it follows the Windows display language by default and can be changed under Settings → Appearance.
+Sweep is a disk usage analyzer for Windows that finds what takes up space with a folder tree, a treemap and file type statistics. It is written natively in Rust with egui and is available as an installer and as a portable single executable. The interface is available in English, Simplified Chinese and Japanese; it follows the Windows display language by default and can be changed under Settings → Appearance.
 
 Compared with WinDirStat:
 
@@ -21,7 +21,12 @@ Compared with WinDirStat:
 
 ## Install
 
-Download `sweep-<version>-windows-x64.exe` from [Releases](https://github.com/Jannchie/sweep/releases) and run it. Requires Windows 10 or 11 (x64).
+Download one of the following from [Releases](https://github.com/Jannchie/sweep/releases). Requires Windows 10 or 11 (x64).
+
+- **Installer (recommended)**: `sweep-<version>-windows-x64-setup.exe` installs Sweep for all users to `C:\Program Files\Sweep` and adds a Start menu shortcut. It can be uninstalled from Settings → Apps.
+- **Portable**: `sweep-<version>-windows-x64.exe` runs directly and writes no installation data.
+
+Sweep checks for a new version at startup and once a day and shows a notice in the title bar; updates are downloaded, verified and installed only after you confirm. Automatic checks can be turned off under Settings → About.
 
 ## Quick start
 
