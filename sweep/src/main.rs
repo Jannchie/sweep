@@ -812,17 +812,16 @@ impl App {
     /// 只在没有输入焦点、对话框和菜单时调用。
     fn selection_keys(&mut self, ctx: &egui::Context, list: List) -> Option<Action> {
         let d = self.doc.as_ref()?;
-        let (del, shift, all, esc, copy) = ctx.input(|i| {
+        let (del, all, esc, copy) = ctx.input(|i| {
             (
-                i.key_pressed(Key::Delete),
-                i.modifiers.shift,
+                delete_shortcut(i),
                 i.modifiers.command && i.key_pressed(Key::A),
                 i.key_pressed(Key::Escape),
-                i.modifiers.command && i.key_pressed(Key::C),
+                copy_shortcut(i),
             )
         });
-        if del {
-            return Some(Action::DeleteSelection { permanent: shift });
+        if let Some(permanent) = del {
+            return Some(Action::DeleteSelection { permanent });
         }
         if all {
             return Some(Action::SelectAll(list));
@@ -1438,6 +1437,20 @@ impl eframe::App for App {
     }
 }
 
+/// Delete 移到回收站（`Some(false)`），Shift+Delete 永久删除（`Some(true)`）。
+/// egui-winit 在 Windows 上把 Shift+Delete 当作"剪切"，只产生 Cut 事件、没有 Delete 按键事件。
+fn delete_shortcut(i: &egui::InputState) -> Option<bool> {
+    if i.modifiers.shift && i.events.contains(&egui::Event::Cut) {
+        return Some(true);
+    }
+    i.key_pressed(Key::Delete).then_some(i.modifiers.shift)
+}
+
+/// Ctrl+C：egui-winit 把它转成 Copy 事件，没有 C 的按键事件。
+fn copy_shortcut(i: &egui::InputState) -> bool {
+    i.events.contains(&egui::Event::Copy) || (i.modifiers.command && i.key_pressed(Key::C))
+}
+
 /// 通知的标记：进行中的通知在操作完成时按标记收走。
 const TAG_RESCAN: &str = "rescan";
 const TAG_DELETE: &str = "delete";
@@ -1672,6 +1685,63 @@ pub fn fmt_time(ft: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 在一帧里送入 `events`，返回 (删除快捷键, 复制快捷键) 的判断结果。
+    fn shortcuts(modifiers: egui::Modifiers, events: Vec<egui::Event>) -> (Option<bool>, bool) {
+        let ctx = egui::Context::default();
+        let mut out = (None, false);
+        let mut all = vec![egui::Event::ModifiersChanged(modifiers)];
+        all.extend(events);
+        let raw = egui::RawInput {
+            events: all,
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(raw, |ui| {
+            out = ui.ctx().input(|i| (delete_shortcut(i), copy_shortcut(i)));
+        });
+        output.textures_delta.clear();
+        out
+    }
+
+    fn key(key: Key, modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    #[test]
+    fn keyboard_shortcuts() {
+        use egui::Modifiers;
+        let none = Modifiers::NONE;
+        assert_eq!(
+            shortcuts(none, vec![key(Key::Delete, none)]),
+            (Some(false), false)
+        );
+        // egui-winit 送来的 Shift+Delete。
+        assert_eq!(
+            shortcuts(Modifiers::SHIFT, vec![egui::Event::Cut]),
+            (Some(true), false)
+        );
+        // 其他平台或输入方式仍可能送来按键事件。
+        assert_eq!(
+            shortcuts(Modifiers::SHIFT, vec![key(Key::Delete, Modifiers::SHIFT)]),
+            (Some(true), false)
+        );
+        // Ctrl+X 也是 Cut，但不是删除。
+        assert_eq!(
+            shortcuts(Modifiers::COMMAND, vec![egui::Event::Cut]),
+            (None, false)
+        );
+        assert_eq!(
+            shortcuts(Modifiers::COMMAND, vec![egui::Event::Copy]),
+            (None, true)
+        );
+        assert_eq!(shortcuts(none, vec![]), (None, false));
+    }
 
     #[test]
     fn formats() {
