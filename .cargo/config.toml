@@ -1,0 +1,3 @@
+# 静态链接 C 运行库：否则 exe 依赖 vcruntime140.dll，没装过 VC++ 运行库的系统上打不开。
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
