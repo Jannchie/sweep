@@ -3,6 +3,10 @@
 //!   cargo run --release -p sweep-scan --example scan -- C:\ --walk
 //!   cargo run --release -p sweep-scan --example scan -- C:\ --compare
 //! 对照模式先读 MFT 再遍历目录，比较总大小、文件数和一批文件夹的大小。
+//!   cargo run --release -p sweep-scan --example scan -- C:\ --incremental
+//! 增量模式：完整扫描并保存缓存，再增量更新一次，与不用缓存的完整扫描比较。
+//! 缓存写在 %LOCALAPPDATA%\Sweep\cache，可用环境变量 LOCALAPPDATA 指到别处；
+//! 设置 SWEEP_TIME_CACHE=1 时另外计时缓存的读写。
 
 use std::sync::atomic::AtomicBool;
 
@@ -13,14 +17,28 @@ fn gib(b: u64) -> String {
 }
 
 fn run(target: &str, engine: Engine) -> Tree {
+    run_with(target, engine, false)
+}
+
+fn run_with(target: &str, engine: Engine, cache: bool) -> Tree {
     let progress = Progress::default();
-    let out = sweep_scan::scan(target, engine, false, &progress, &AtomicBool::new(false))
-        .unwrap_or_else(|e| panic!("扫描失败：{e}"));
-    let t = out.tree;
+    let out = sweep_scan::scan(
+        target,
+        engine,
+        false,
+        cache,
+        &progress,
+        &AtomicBool::new(false),
+    )
+    .unwrap_or_else(|e| panic!("扫描失败：{e}"));
+    let t = std::sync::Arc::unwrap_or_clone(out.tree);
     let live = t.nodes.iter().filter(|n| !n.has(flags::DELETED)).count();
     let r = t.node(t.root);
     let (ws, peak, private) = system::memory();
     println!("== {:?} {target}", out.engine);
+    if let Some((dirs, _)) = out.incremental {
+        println!("   incremental: {dirs} folders relisted");
+    }
     if let Some(e) = &out.mft_fallback {
         println!("   mft failed, walked instead: {e}");
     }
@@ -79,6 +97,7 @@ fn main() {
         }
         "--compare" => compare(target),
         "--compare-dir" => compare_dir(target),
+        "--incremental" => incremental(target),
         "--top" => {
             let t = run(target, Engine::Auto);
             top(&t);
@@ -134,6 +153,74 @@ fn compare_dir(dir: &str) {
         a.len(),
         b.len()
     );
+}
+
+/// 完整扫描（保存缓存）→ 增量更新 → 不用缓存的完整扫描，比较后两者。
+fn incremental(target: &str) {
+    let target = sweep_scan::normalize(target);
+    sweep_scan::cache::remove(&target);
+    run_with(&target, Engine::Auto, true);
+    if let Some(p) = sweep_scan::cache::file_for(&target) {
+        let len = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
+        println!(
+            "   cache {} ({:.1} MiB)",
+            p.display(),
+            len as f64 / 1048576.0
+        );
+    }
+    if std::env::var("SWEEP_TIME_CACHE").is_ok() {
+        let t = std::time::Instant::now();
+        let (meta, tree, ids) = sweep_scan::cache::load(&target).unwrap();
+        let load = t.elapsed();
+        let t = std::time::Instant::now();
+        sweep_scan::cache::save(&tree, &ids, &meta).unwrap();
+        println!("   cache load {load:?}  save {:?}", t.elapsed());
+    }
+    let i = run_with(&target, Engine::Auto, true);
+    let f = run_with(&target, Engine::Auto, false);
+    let (a, b) = (i.node(i.root), f.node(f.root));
+    println!(
+        "
+== 增量 vs 完整"
+    );
+    println!(
+        "   size {} vs {} (diff {:+} B)  files {} vs {}  dirs {} vs {}",
+        gib(a.size),
+        gib(b.size),
+        a.size as i64 - b.size as i64,
+        a.files,
+        b.files,
+        a.dirs,
+        b.dirs
+    );
+    // 沿着有差异的目录往下找，列出大小不同的文件。
+    let mut stack = vec![f.root];
+    let mut shown = 0;
+    while let Some(d) = stack.pop() {
+        for c in f.children(d) {
+            let path = f.path(c);
+            let y = f.node(c);
+            let Some(x) = i.find(&path).map(|n| *i.node(n)) else {
+                if shown < 30 {
+                    println!("   只在完整扫描里：{path} {}", y.size);
+                    shown += 1;
+                }
+                continue;
+            };
+            if x.size == y.size {
+                continue;
+            }
+            if y.is_dir() {
+                stack.push(c);
+            } else if shown < 30 {
+                println!(
+                    "   差异 {path}: incremental {} / {} full {} / {}  mtime {} vs {}",
+                    x.size, x.alloc, y.size, y.alloc, x.mtime, y.mtime
+                );
+                shown += 1;
+            }
+        }
+    }
 }
 
 /// 根下最大的文件夹与整个卷最大的文件。
