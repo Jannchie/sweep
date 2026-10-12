@@ -294,9 +294,12 @@ fn crumb(ui: &mut Ui, label: &str, last: bool, root: bool) -> egui::Response {
     } else {
         FontId::proportional(13.0)
     };
-    let g = ui.painter().layout_no_wrap(label.to_string(), font, p.text);
     let extra = if root { 22.0 } else { 0.0 };
-    let w = (g.size().x + 16.0 + extra).min(220.0);
+    // 每一级最多 220pt 宽，放不下时以省略号截断（悬停显示完整路径）。
+    let mut job = egui::text::LayoutJob::simple_singleline(label.to_string(), font, p.text);
+    job.wrap = egui::text::TextWrapping::truncate_at_width(220.0 - 16.0 - extra);
+    let g = ui.painter().layout_job(job);
+    let w = g.size().x + 16.0 + extra;
     let (rect, resp) = ui.allocate_exact_size(vec2(w, 28.0), Sense::click());
     if resp.hovered() && !last {
         ui.painter()
@@ -312,8 +315,7 @@ fn crumb(ui: &mut Ui, label: &str, last: bool, root: bool) -> egui::Response {
             color,
         );
     }
-    let clip = ui.painter().with_clip_rect(rect.shrink2(vec2(4.0, 0.0)));
-    clip.galley(
+    ui.painter().galley(
         pos2(
             rect.left() + 8.0 + extra,
             rect.center().y - g.size().y / 2.0,

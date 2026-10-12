@@ -431,7 +431,8 @@ pub fn menu_heading(ui: &mut Ui, text: &str, width: f32) {
     }
     ui.spacing_mut().item_spacing.y = 2.0;
     ui.add_space(2.0);
-    ui.label(RichText::new(text).size(12.0).color(p.muted));
+    // 单行显示，过长时以省略号截断；悬停可看完整名称。
+    ui.add(egui::Label::new(RichText::new(text).size(12.0).color(p.muted)).truncate());
     ui.add_space(2.0);
 }
 
@@ -527,23 +528,36 @@ pub fn kpi(
         16.0,
         color,
     );
-    let t = painter.text(
-        pos2(inner.left() + 22.0, inner.top() + 8.0),
-        Align2::LEFT_CENTER,
-        title,
-        FontId::proportional(12.5),
+    // 标题和右侧说明共用一行，都单行显示、放不下时以省略号截断：
+    // 标题优先，但给说明至少留出它所需宽度与整行 40% 中较小的那部分。
+    let line = |text: &str, size: f32, color: Color32, width: f32| {
+        let mut job = egui::text::LayoutJob::simple_singleline(
+            text.to_string(),
+            FontId::proportional(size),
+            color,
+        );
+        job.wrap = egui::text::TextWrapping::truncate_at_width(width.max(0.0));
+        painter.layout_job(job)
+    };
+    let full = inner.width() - 22.0;
+    let sub_need = painter
+        .layout_no_wrap(sub.to_string(), FontId::proportional(11.5), p.faint)
+        .size()
+        .x;
+    let title_g = line(title, 12.5, p.muted, full - 12.0 - sub_need.min(full * 0.4));
+    let title_cut = title_g.elided;
+    let title_right = inner.left() + 22.0 + title_g.size().x;
+    painter.galley(
+        pos2(
+            inner.left() + 22.0,
+            inner.top() + 8.0 - title_g.size().y / 2.0,
+        ),
+        title_g,
         p.muted,
     );
-    // 说明放在标题行右侧，放不下时截断。
-    let room = inner.right() - t.right() - 12.0;
+    let room = inner.right() - title_right - 12.0;
     if room > 20.0 {
-        let mut job = egui::text::LayoutJob::simple_singleline(
-            sub.to_string(),
-            FontId::proportional(11.5),
-            p.faint,
-        );
-        job.wrap = egui::text::TextWrapping::truncate_at_width(room);
-        let g = painter.layout_job(job);
+        let g = line(sub, 11.5, p.faint, room);
         painter.galley(
             pos2(
                 inner.right() - g.size().x,
@@ -560,7 +574,11 @@ pub fn kpi(
         FontId::new(24.0, semibold()),
         p.text,
     );
-    resp
+    if title_cut {
+        resp.on_hover_text(title)
+    } else {
+        resp
+    }
 }
 
 #[cfg(test)]
