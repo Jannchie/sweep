@@ -194,6 +194,8 @@ struct App {
     passes: VecDeque<Instant>,
     /// 上一帧显示的页面，用来发现切到了清理页。
     last_view: View,
+    /// 增量扫描缓存占用的空间；None 表示需要重新统计（打开设置页、扫描、清除后）。
+    cache_usage: Option<u64>,
     updater: update::Updater,
     /// 本帧开始时读到的更新状态。
     update: update::Status,
@@ -252,6 +254,7 @@ impl App {
             focus_search: false,
             passes: VecDeque::new(),
             last_view: View::Disks,
+            cache_usage: None,
             updater,
             update: update::Status::default(),
             update_announced: None,
@@ -293,8 +296,10 @@ impl App {
             target,
             self.settings.engine.engine(),
             by_alloc,
+            self.settings.incremental,
             move || c.request_repaint(),
         ));
+        self.cache_usage = None;
         self.scan_error = None;
         self.view = View::Analyze;
         self.menu = None;
@@ -1102,6 +1107,14 @@ impl App {
                 if self.elevated {
                     ui.label(faint(t!("管理员", "Administrator", "管理者").into()));
                 }
+                if let Some((dirs, at)) = self.doc.as_ref().and_then(|d| d.incremental) {
+                    let (dirs, at) = (fmt_count(dirs as u64), fmt_time(at));
+                    ui.label(faint(tf!(
+                        "基于 {at} 的完整扫描，更新了 {dirs} 个有变动的文件夹",
+                        "Based on the full scan of {at}; {dirs} changed folders updated",
+                        "{at} の完全スキャンを基に、変更のあった {dirs} 個のフォルダーを更新"
+                    )));
+                }
                 if let Some(e) = self.doc.as_ref().and_then(|d| d.mft_fallback.as_deref()) {
                     ui.label(faint(tf!(
                         "读取 MFT 失败（{e}），已改用目录遍历",
@@ -1325,12 +1338,38 @@ impl eframe::App for App {
                             ui,
                             &mut self.settings,
                             self.elevated,
+                            *self
+                                .cache_usage
+                                .get_or_insert_with(sweep_scan::cache::usage),
                             &self.update.check,
                         )
                     })
                     .inner;
                 match action {
                     Some(settings_view::SettingsAction::CheckUpdate) => self.updater.check_now(),
+                    Some(settings_view::SettingsAction::ClearCache) => {
+                        match sweep_scan::cache::clear() {
+                            Ok(()) => self.notify_ok(
+                                t!(
+                                    "已清除扫描结果缓存",
+                                    "Saved scan results cleared",
+                                    "保存したスキャン結果を消去しました"
+                                )
+                                .into(),
+                                None,
+                            ),
+                            Err(e) => self.notify_err(
+                                t!(
+                                    "无法清除扫描结果缓存",
+                                    "Couldn't clear the saved scan results",
+                                    "保存したスキャン結果を消去できませんでした"
+                                )
+                                .into(),
+                                Some(e.to_string()),
+                            ),
+                        }
+                        self.cache_usage = None;
+                    }
                     Some(settings_view::SettingsAction::ShowUpdate) => {
                         if let update::Check::Available(r) = &self.update.check {
                             self.modal = Some(Modal::Update(r.clone()));

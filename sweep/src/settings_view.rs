@@ -16,12 +16,14 @@ use crate::{dialogs, update_view, widgets};
 pub enum SettingsAction {
     CheckUpdate,
     ShowUpdate,
+    ClearCache,
 }
 
 pub fn show(
     ui: &mut Ui,
     settings: &mut Settings,
     elevated: bool,
+    cache_usage: u64,
     update: &Check,
 ) -> Option<SettingsAction> {
     let mut action = None;
@@ -83,6 +85,28 @@ pub fn show(
                                 .unwrap_or(0);
                             if let Some(i) = choice(ui, &labels, cur) {
                                 settings.engine = EngineChoice::ALL[i];
+                            }
+                        });
+                        divider(ui);
+                        let size = crate::fmt_bytes(cache_usage);
+                        let desc = tf!(
+                            "保存扫描结果。以管理员身份再次扫描 NTFS 磁盘时，只更新之后有变动的文件夹；间隔太久、系统的变更日志已不完整时自动完整扫描。缓存占用 {size}。",
+                            "Saves scan results. When an NTFS drive is scanned again as administrator, only the folders that changed since are updated; after a long gap, when the system change journal no longer covers it, a full scan runs instead. Using {size}.",
+                            "スキャン結果を保存します。管理者として NTFS ドライブを再スキャンすると、その後に変更のあったフォルダーだけを更新します。間隔が長くシステムの変更ジャーナルで追跡しきれない場合は完全スキャンになります。使用量 {size}。"
+                        );
+                        row(ui, t!("增量扫描", "Incremental scans", "差分スキャン"), &desc, |ui| {
+                            ui.spacing_mut().item_spacing.x = 12.0;
+                            widgets::switch(ui, &mut settings.incremental);
+                            if cache_usage > 0
+                                && dialogs::button(
+                                    ui,
+                                    t!("清除缓存", "Clear", "消去"),
+                                    dialogs::Kind::Secondary,
+                                    true,
+                                )
+                                .clicked()
+                            {
+                                action = Some(SettingsAction::ClearCache);
                             }
                         });
                     });

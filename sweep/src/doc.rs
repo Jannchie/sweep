@@ -55,6 +55,8 @@ pub struct Doc {
     pub elapsed: Duration,
     /// 读取 MFT 失败、改用目录遍历时 MFT 那边的错误。
     pub mft_fallback: Option<String>,
+    /// 增量更新：重新列出的文件夹数、所基于的完整扫描的时间（FILETIME）。
+    pub incremental: Option<(usize, u64)>,
     /// 数据版本：树每改一次加一。
     pub version: u64,
     pub expanded: HashSet<u32>,
@@ -102,7 +104,7 @@ impl Search {
 
 impl Doc {
     pub fn new(out: sweep_scan::Outcome, target: String) -> Self {
-        let tree = Arc::new(out.tree);
+        let tree = out.tree;
         let root = tree.root;
         let mut selection = Selection::default();
         selection.set_single(root);
@@ -112,6 +114,7 @@ impl Doc {
             engine: out.engine,
             elapsed: out.elapsed,
             mft_fallback: out.mft_fallback,
+            incremental: out.incremental,
             version: 1,
             expanded: HashSet::from([root]),
             rows: Vec::new(),

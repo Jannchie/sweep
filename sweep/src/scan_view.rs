@@ -27,7 +27,10 @@ pub fn show(ui: &mut Ui, scan: &Scan, volumes: &[Volume]) -> Vec<Action> {
     let volume = volumes
         .iter()
         .find(|v| v.root.eq_ignore_ascii_case(&scan.target));
-    let (frac, mft) = if total > 0 {
+    let incremental = pr.incremental.load(Ordering::Relaxed);
+    let (frac, mft) = if incremental {
+        ((total > 0).then(|| done as f32 / total as f32), false)
+    } else if total > 0 {
         (Some(done as f32 / total as f32), true)
     } else {
         (
@@ -66,7 +69,13 @@ pub fn show(ui: &mut Ui, scan: &Scan, volumes: &[Volume]) -> Vec<Action> {
         });
     });
     ui.label(
-        RichText::new(if mft {
+        RichText::new(if incremental {
+            t!(
+                "正在载入上次的结果，只更新之后有变动的文件夹",
+                "Loading the previous result and updating only the folders that changed since",
+                "前回の結果を読み込み、その後に変更のあったフォルダーだけを更新しています"
+            )
+        } else if mft {
             t!(
                 "正在读取 NTFS 主文件表（MFT）",
                 "Reading the NTFS master file table (MFT)",

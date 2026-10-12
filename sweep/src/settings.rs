@@ -152,6 +152,8 @@ pub struct Settings {
     pub theme: ThemeChoice,
     pub basis: Basis,
     pub engine: EngineChoice,
+    /// 保存扫描结果，再次扫描时只更新有变动的文件夹（见 sweep_scan::cache）。
+    pub incremental: bool,
     /// 启动时和每天检查一次新版本。
     pub auto_update: bool,
     /// 用户选择跳过的版本，不再提示；空字符串表示没有。
@@ -165,6 +167,7 @@ impl Default for Settings {
             theme: ThemeChoice::System,
             basis: Basis::Allocated,
             engine: EngineChoice::Auto,
+            incremental: true,
             auto_update: true,
             skipped_version: String::new(),
         }
@@ -206,6 +209,7 @@ impl Settings {
                 "theme" => s.theme = pick(&ThemeChoice::ALL, ThemeChoice::key, v, s.theme),
                 "basis" => s.basis = pick(&Basis::ALL, Basis::key, v, s.basis),
                 "engine" => s.engine = pick(&EngineChoice::ALL, EngineChoice::key, v, s.engine),
+                "incremental" => s.incremental = v != "false",
                 "auto_update" => s.auto_update = v != "false",
                 "skip_version" => s.skipped_version = v.to_string(),
                 _ => {}
@@ -216,11 +220,12 @@ impl Settings {
 
     fn serialize(&self) -> String {
         format!(
-            "language={}\ntheme={}\nbasis={}\nengine={}\nauto_update={}\nskip_version={}\n",
+            "language={}\ntheme={}\nbasis={}\nengine={}\nincremental={}\nauto_update={}\nskip_version={}\n",
             self.language.key(),
             self.theme.key(),
             self.basis.key(),
             self.engine.key(),
+            self.incremental,
             self.auto_update,
             self.skipped_version,
         )
@@ -247,6 +252,7 @@ mod tests {
                 theme: ThemeChoice::Dark,
                 basis: Basis::Logical,
                 engine: EngineChoice::Walk,
+                incremental: false,
                 auto_update: false,
                 skipped_version: "0.3.0".into(),
             };
@@ -264,6 +270,7 @@ mod tests {
         assert_eq!(s.basis, Basis::Logical);
         assert_eq!(s.engine, EngineChoice::Walk);
         assert!(s.auto_update);
+        assert!(s.incremental);
         assert_eq!(s.skipped_version, "");
         assert_eq!(Settings::parse("language=ja\n").language, Language::Ja);
         assert_eq!(Settings::parse("language=fr\n").language, Language::System);
