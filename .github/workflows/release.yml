@@ -31,6 +31,18 @@ jobs:
       - name: Build
         run: cargo build --release
 
+      # 用来打包安装程序；runner 上没有时用 choco 安装。
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          $iscc = Get-ChildItem 'C:\Program Files*\Inno Setup*\ISCC.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $iscc) {
+            choco install innosetup -y --no-progress
+            $iscc = Get-ChildItem 'C:\Program Files*\Inno Setup*\ISCC.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          if (-not $iscc) { Write-Error 'ISCC.exe not found'; exit 1 }
+          "ISCC=$($iscc.FullName)" >> $env:GITHUB_ENV
+
       - name: Package
         shell: pwsh
         run: |
@@ -38,6 +50,13 @@ jobs:
           New-Item -ItemType Directory dist | Out-Null
           Copy-Item target/release/sweep.exe "dist/$name.exe"
           Compress-Archive -Path target/release/sweep.exe -DestinationPath "dist/$name.zip"
+          # 安装程序；图标是 sweep/build.rs 生成在 OUT_DIR 里的 sweep.ico。
+          $version = '${{ github.ref_name }}'.TrimStart('v')
+          $ico = Get-ChildItem target/release/build -Recurse -Filter sweep.ico | Sort-Object LastWriteTime | Select-Object -Last 1
+          & $env:ISCC /Q "/DAppVersion=$version" "/DFileVersion=$($version.Split('-')[0])" `
+            "/DSourceExe=$((Resolve-Path target/release/sweep.exe).Path)" "/DIconFile=$($ico.FullName)" `
+            "/DOutputDir=$((Resolve-Path dist).Path)" "/DOutputName=$name-setup" installer/sweep.iss
+          if ($LASTEXITCODE -ne 0) { Write-Error "ISCC failed with exit code $LASTEXITCODE"; exit 1 }
           Get-ChildItem dist | ForEach-Object {
             "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
           } | Set-Content dist/SHA256SUMS.txt
