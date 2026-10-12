@@ -77,6 +77,7 @@ impl Layout {
         self.tiles.iter().rev().find(|t| t.contains(x, y))
     }
 
+    #[cfg(test)]
     pub fn rect_of(&self, node: u32) -> Option<[f32; 4]> {
         self.tiles.iter().find(|t| t.node == node).map(|t| t.rect)
     }
@@ -88,6 +89,8 @@ pub struct Treemap {
     pub current: Option<Layout>,
     pub texture: Option<TextureHandle>,
     requested: Option<Key>,
+    /// 选中项对应的块（下标），按 (布局, 选中项版本) 缓存，平时不必每帧扫一遍所有块。
+    pub selected_tiles: Option<((Key, u64), Vec<usize>)>,
 }
 
 impl Treemap {
@@ -118,6 +121,7 @@ impl Treemap {
             current: None,
             texture: None,
             requested: None,
+            selected_tiles: None,
         }
     }
 

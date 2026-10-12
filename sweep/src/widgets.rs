@@ -293,6 +293,27 @@ pub fn menu_plain(ui: &mut Ui, label: &str) -> Response {
     menu_entry(ui, None, label, false)
 }
 
+/// 灰掉、不能点的菜单项（多选时只对单项有意义的操作）。`why` 作为悬停提示。
+pub fn menu_item_disabled(ui: &mut Ui, glyph: Icon, label: &str, why: &str) -> Response {
+    let p = Palette::of(ui.ctx());
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::hover());
+    icon(
+        ui,
+        glyph,
+        pos2(rect.left() + 14.0, rect.center().y),
+        15.0,
+        p.faint,
+    );
+    ui.painter().text(
+        pos2(rect.left() + 30.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        label,
+        FontId::proportional(13.0),
+        p.faint,
+    );
+    resp.on_hover_text(why)
+}
+
 fn menu_entry(ui: &mut Ui, glyph: Option<Icon>, label: &str, danger: bool) -> Response {
     let (resp, bg) = menu_row(ui, glyph, label, danger);
     if resp.hovered() {

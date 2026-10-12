@@ -6,6 +6,7 @@
 
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, channel};
 use std::time::Duration;
 
@@ -13,6 +14,7 @@ use eframe::egui;
 use sweep_scan::{Engine, NONE, Tree, flags};
 
 use crate::cleanup::{self, Suggestion};
+use crate::selection::Selection;
 
 /// 派生数据（扩展名统计、最大文件、清理建议），对应某个数据版本。
 pub struct Derived {
@@ -26,12 +28,27 @@ pub struct Derived {
 
 pub enum Mutation {
     /// 已经删掉了，从树上摘除。
-    Remove(u32),
+    Remove(Vec<u32>),
     /// 用重新扫描的结果替换这个目录的内容。
     Graft(u32, Box<Tree>),
 }
 
+/// 选中项的合计（缓存，选中项或数据变了才重算）。
+#[derive(Clone, Copy, Default)]
+pub struct SelSummary {
+    /// 选中的项数（未规范化，即用户看到的高亮行数）。
+    pub count: usize,
+    /// 规范化后的合计大小（文件夹和它里面的项同时选中时不重复计算）。
+    pub total: u64,
+    /// 能删除的项数（规范化之后）。
+    pub deletable: usize,
+}
+
+/// 每次扫描得到的 Doc 各有一个编号，后台删除完成时据此判断节点下标是否还对应同一棵树。
+static NEXT_DOC: AtomicU64 = AtomicU64::new(1);
+
 pub struct Doc {
+    pub id: u64,
     pub tree: Arc<Tree>,
     pub target: String,
     pub engine: Engine,
@@ -44,7 +61,8 @@ pub struct Doc {
     /// 树形列表当前显示的行：(节点, 缩进层级)。
     pub rows: Vec<(u32, u16)>,
     rows_gen: Option<u64>,
-    pub selected: Option<u32>,
+    pub selection: Selection,
+    summary: Option<((u64, u64), SelSummary)>,
     /// 矩形树图当前的根。
     pub zoom: u32,
     pub highlight_ext: Option<u16>,
@@ -86,7 +104,10 @@ impl Doc {
     pub fn new(out: sweep_scan::Outcome, target: String) -> Self {
         let tree = Arc::new(out.tree);
         let root = tree.root;
+        let mut selection = Selection::default();
+        selection.set_single(root);
         Self {
+            id: NEXT_DOC.fetch_add(1, Ordering::Relaxed),
             target,
             engine: out.engine,
             elapsed: out.elapsed,
@@ -95,7 +116,8 @@ impl Doc {
             expanded: HashSet::from([root]),
             rows: Vec::new(),
             rows_gen: None,
-            selected: Some(root),
+            selection,
+            summary: None,
             zoom: root,
             highlight_ext: None,
             derived: None,
@@ -281,8 +303,8 @@ impl Doc {
         };
         for m in self.pending.drain(..) {
             match m {
-                Mutation::Remove(n) => {
-                    tree.remove(n);
+                Mutation::Remove(nodes) => {
+                    tree.remove_many(&nodes);
                 }
                 Mutation::Graft(n, sub) => {
                     if !tree.node(n).has(flags::DELETED) {
@@ -291,13 +313,16 @@ impl Doc {
                 }
             }
         }
-        // 选中项、缩放根如果被删了，退回到还在的祖先。
+        // 被删掉的节点移出选中项；键盘光标、缩放根如果被删了，退回到还在的祖先。
+        // 光标只移动、不选中祖先，免得连按两次 Delete 删掉上级文件夹。
         let alive = |t: &Tree, n: u32| !t.node(n).has(flags::DELETED);
         let tree = &*self.tree;
-        if let Some(s) = self.selected
-            && !alive(tree, s)
+        self.selection.retain(|n| alive(tree, n));
+        if let Some(f) = self.selection.focus()
+            && !alive(tree, f)
         {
-            self.selected = tree.ancestors(s).find(|&a| alive(tree, a));
+            self.selection
+                .set_focus(tree.ancestors(f).find(|&a| alive(tree, a)));
         }
         if !alive(tree, self.zoom) {
             self.zoom = tree
@@ -340,7 +365,7 @@ impl Doc {
         for a in ancestors {
             self.expanded.insert(a);
         }
-        self.selected = Some(n);
+        self.selection.set_single(n);
         self.rebuild_rows();
         self.scroll_to = self.rows.iter().position(|r| r.0 == n);
     }
@@ -373,16 +398,101 @@ impl Doc {
         }
     }
 
-    /// 键盘导航：在当前可见的行之间移动选中项。
-    pub fn select_row(&mut self, row: usize) {
-        if let Some(&(n, _)) = self.rows.get(row) {
-            self.selected = Some(n);
-            self.scroll_to = Some(row);
+    /// 键盘导航：在当前可见的行之间移动。`extend`（Shift）时选中锚点到这一行的范围，否则只选这一行。
+    pub fn select_row(&mut self, row: usize, extend: bool) {
+        let Some(&(n, _)) = self.rows.get(row) else {
+            return;
+        };
+        if extend {
+            let rows = &self.rows;
+            self.selection
+                .extend_to(|i| rows[i].0, rows.len(), row, false);
+        } else {
+            self.selection.set_single(n);
+        }
+        self.scroll_to = Some(row);
+    }
+
+    /// 键盘光标所在的行。
+    pub fn focus_row(&self) -> Option<usize> {
+        let f = self.selection.focus()?;
+        self.rows.iter().position(|r| r.0 == f)
+    }
+
+    /// 树形列表当前的顺序：搜索时是搜索结果，否则是展开后可见的行。
+    pub fn visible(&self) -> Vec<u32> {
+        if self.search.active() {
+            self.search.results.clone()
+        } else {
+            self.rows.iter().map(|r| r.0).collect()
         }
     }
 
-    pub fn selected_row(&self) -> Option<usize> {
-        let s = self.selected?;
-        self.rows.iter().position(|r| r.0 == s)
+    /// 清理页"最大的文件"列表（去掉已删除的）。
+    pub fn largest(&self) -> Vec<u32> {
+        let t = &self.tree;
+        self.derived
+            .as_ref()
+            .map(|d| {
+                d.largest
+                    .iter()
+                    .copied()
+                    .filter(|&n| !t.node(n).has(flags::DELETED))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Ctrl+A（分析页）：选中当前文件夹（面包屑 / 矩形树图的根）里的所有项。
+    /// 这个文件夹在树里展开着时选它下面所有可见的行（与资源管理器"全选当前视图"一致，
+    /// 展开的子文件夹里的项也算，删除前会规范化）；没展开或看不到时选它的直接子项。
+    /// 搜索时选中全部搜索结果。
+    pub fn select_all_in_view(&mut self) {
+        if self.search.active() {
+            let results = self.search.results.clone();
+            self.selection.select_all(results);
+            return;
+        }
+        let zoom = self.zoom;
+        let pos = self.rows.iter().position(|r| r.0 == zoom);
+        match pos {
+            Some(i) if self.expanded.contains(&zoom) => {
+                let depth = self.rows[i].1;
+                let under = self.rows[i + 1..]
+                    .iter()
+                    .take_while(|r| r.1 > depth)
+                    .map(|r| r.0);
+                self.selection.select_all(under);
+            }
+            _ => {
+                let t = self.tree.clone();
+                self.selection.select_all(t.children(zoom));
+            }
+        }
+    }
+
+    /// 选中项的数量、规范化后的合计大小、能删除的项数。只在选中项或数据变了时重算。
+    pub fn summary(&mut self) -> SelSummary {
+        let key = (self.selection.generation(), self.version);
+        if let Some((k, s)) = self.summary
+            && k == key
+        {
+            return s;
+        }
+        let t = &self.tree;
+        let total = self
+            .selection
+            .normalized(t)
+            .iter()
+            .map(|&n| t.value(n))
+            .sum();
+        let deletable = self.selection.deletion_set(t, crate::deletable).0.len();
+        let s = SelSummary {
+            count: self.selection.len(),
+            total,
+            deletable,
+        };
+        self.summary = Some((key, s));
+        s
     }
 }

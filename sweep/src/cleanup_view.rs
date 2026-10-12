@@ -12,7 +12,7 @@ use crate::doc::Doc;
 use crate::file_icons::FileIcons;
 use crate::icons_gen::Icon;
 use crate::theme::{self, Palette, semibold};
-use crate::{Action, fmt_bytes, fmt_count, fmt_time, widgets};
+use crate::{Action, List, fmt_bytes, fmt_count, fmt_time, widgets};
 
 pub fn show(ui: &mut Ui, doc: &mut Doc, icons: &mut FileIcons, deleting: bool) -> Vec<Action> {
     let p = Palette::of(ui.ctx());
@@ -280,18 +280,14 @@ fn suggestion_row(
 
 fn largest(ui: &mut Ui, doc: &mut Doc, icons: &mut FileIcons, actions: &mut Vec<Action>) {
     let p = Palette::of(ui.ctx());
-    let Some(d) = &doc.derived else {
+    if doc.derived.is_none() {
         ui.label(RichText::new(t!("正在统计…", "Counting…", "集計しています…")).color(p.muted));
         return;
-    };
+    }
     let t = doc.tree.clone();
-    let list: Vec<u32> = d
-        .largest
-        .iter()
-        .copied()
-        .filter(|&n| !t.node(n).has(sweep_scan::flags::DELETED))
-        .collect();
-    let selected = doc.selected;
+    let list = doc.largest();
+    let selection = &doc.selection;
+    let mods = ui.input(|i| i.modifiers);
     ui.spacing_mut().item_spacing = vec2(10.0, 0.0);
     TableBuilder::new(ui)
         .id_salt("largest")
@@ -309,7 +305,7 @@ fn largest(ui: &mut Ui, doc: &mut Doc, icons: &mut FileIcons, actions: &mut Vec<
         .body(|body| {
             body.rows(theme::ROW_HEIGHT + 8.0, list.len(), |mut row| {
                 let n = list[row.index()];
-                row.set_selected(selected == Some(n));
+                row.set_selected(selection.contains(n));
                 row.col(|ui| {
                     let rect = ui.max_rect();
                     let icon = Rect::from_min_size(
@@ -363,10 +359,15 @@ fn largest(ui: &mut Ui, doc: &mut Doc, icons: &mut FileIcons, actions: &mut Vec<
                     )
                 });
                 let resp = row.response();
-                if resp.clicked() || resp.secondary_clicked() {
-                    actions.push(Action::Select(n));
+                if resp.clicked() {
+                    actions.push(Action::Click {
+                        node: n,
+                        list: List::Largest,
+                        ctrl: mods.command,
+                        shift: mods.shift,
+                    });
                 }
-                if resp.double_clicked() {
+                if resp.double_clicked() && !mods.command && !mods.shift {
                     actions.push(Action::Locate(n));
                 }
                 if resp.secondary_clicked()
@@ -375,9 +376,9 @@ fn largest(ui: &mut Ui, doc: &mut Doc, icons: &mut FileIcons, actions: &mut Vec<
                     actions.push(Action::OpenMenu(n, pos));
                 }
                 resp.on_hover_text(t!(
-                    "双击在目录树中定位，右键查看更多操作",
-                    "Double-click to locate in the tree. Right-click for more.",
-                    "ダブルクリックでツリー内の場所を表示、右クリックでその他の操作"
+                    "双击在目录树中定位，右键查看更多操作。Ctrl/Shift+单击多选，Delete 删除。",
+                    "Double-click to locate in the tree. Right-click for more. Ctrl/Shift+click to select several; Delete to delete.",
+                    "ダブルクリックでツリー内の場所を表示、右クリックでその他の操作。Ctrl/Shift+クリックで複数選択、Delete で削除。"
                 ));
             });
         });

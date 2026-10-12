@@ -14,7 +14,7 @@ use crate::file_icons::{self, FileIcons};
 use crate::icons_gen::Icon;
 use crate::theme::{self, Palette, semibold, types};
 use crate::treemap::{self, TileKind, Treemap};
-use crate::{Action, deletable, fmt_bytes, fmt_count, fmt_time, widgets};
+use crate::{Action, List, fmt_bytes, fmt_count, fmt_time, widgets};
 
 /// 每层缩进。
 const INDENT: f32 = 16.0;
@@ -61,8 +61,9 @@ pub fn show(
     actions
 }
 
-fn kpis(ui: &mut Ui, doc: &Doc) {
+fn kpis(ui: &mut Ui, doc: &mut Doc) {
     let p = Palette::of(ui.ctx());
+    let summary = doc.summary();
     let t = &doc.tree;
     let r = t.node(t.root);
     let gap = 12.0;
@@ -104,35 +105,35 @@ fn kpis(ui: &mut Ui, doc: &Doc) {
             },
             p.accent,
         );
-        let (name, size, share) = match doc.selected {
-            Some(s) => (
-                crate::short_name(t, s).to_string(),
-                fmt_bytes(t.value(s)),
-                {
-                    let share = pct(t.value(s), t.value(t.root));
-                    tf!(
-                        "占全部 {share:.1}%",
-                        "{share:.1}% of total",
-                        "全体の {share:.1}%"
-                    )
-                },
-            ),
-            None => (
-                t!("未选择", "None", "なし").into(),
-                "—".into(),
-                String::new(),
-            ),
+        // 选中一项时标题显示名字，多项时显示项数；大小是规范化后的合计（不重复计算）。
+        let title = match (summary.count, doc.selection.single()) {
+            (0, _) => {
+                let none = t!("未选择", "None", "なし");
+                tf!("选中 · {none}", "Selected · {none}", "選択中 · {none}")
+            }
+            (_, Some(s)) => {
+                let name = crate::short_name(t, s);
+                tf!("选中 · {name}", "Selected · {name}", "選択中 · {name}")
+            }
+            (n, None) => {
+                let c = fmt_count(n as u64);
+                tf!("选中 {c} 项", "{c} items selected", "{c} 項目を選択")
+            }
         };
-        widgets::kpi(
-            ui,
-            w,
-            76.0,
-            Icon::Target,
-            &tf!("选中 · {name}", "Selected · {name}", "選択中 · {name}"),
-            &size,
-            &share,
-            p.accent,
-        );
+        let (size, share) = if summary.count == 0 {
+            ("—".to_string(), String::new())
+        } else {
+            let share = pct(summary.total, t.value(t.root));
+            (
+                fmt_bytes(summary.total),
+                tf!(
+                    "占全部 {share:.1}%",
+                    "{share:.1}% of total",
+                    "全体の {share:.1}%"
+                ),
+            )
+        };
+        widgets::kpi(ui, w, 76.0, Icon::Target, &title, &size, &share, p.accent);
         widgets::kpi(
             ui,
             w,
@@ -164,6 +165,7 @@ fn toolbar(
 ) {
     let p = Palette::of(ui.ctx());
     let t = doc.tree.clone();
+    let summary = doc.summary();
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
         let chain: Vec<u32> = t.ancestors(doc.zoom).collect();
@@ -203,36 +205,42 @@ fn toolbar(
 
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
-            let sel = doc.selected.filter(|&s| deletable(&t, s));
+            let can = summary.deletable > 0;
             let resp = widgets::tool_button(
                 ui,
                 Icon::Trash,
                 t!("移到回收站", "Move to Recycle Bin", "ごみ箱に移動"),
-                sel.is_some() && !deleting,
+                can && !deleting,
                 false,
             );
-            let resp = match sel {
-                Some(s) => {
-                    let path = t.path(s);
-                    resp.on_hover_text(tf!(
-                        "{path}（Delete；Shift+Delete 永久删除）",
-                        "{path} (Delete; Shift+Delete to delete permanently)",
-                        "{path} (Delete、Shift+Delete で完全に削除)"
-                    ))
+            let what = match doc.selection.single() {
+                Some(s) => t.path(s),
+                None => {
+                    let (n, size) = (crate::n_items(summary.count as u64), fmt_bytes(summary.total));
+                    format!("{n} · {size}")
                 }
-                None => resp.on_hover_text(t!(
-                    "先在列表或矩形树图中选中一项",
-                    "Select an item in the list or treemap first",
-                    "先にリストかツリーマップで項目を選択してください"
-                )),
             };
-            if resp.clicked()
-                && let Some(s) = sel
-            {
-                actions.push(Action::DeleteNodes {
-                    nodes: vec![s],
-                    permanent: false,
-                });
+            let resp = if can {
+                resp.on_hover_text(tf!(
+                    "{what}（Delete；Shift+Delete 永久删除）",
+                    "{what} (Delete; Shift+Delete to delete permanently)",
+                    "{what} (Delete、Shift+Delete で完全に削除)"
+                ))
+            } else if summary.count > 0 {
+                resp.on_hover_text(t!(
+                    "选中的项目不能删除",
+                    "The selected items can't be deleted",
+                    "選択した項目は削除できません"
+                ))
+            } else {
+                resp.on_hover_text(t!(
+                    "先在列表或矩形树图中选中项目（Ctrl/Shift+单击可多选）",
+                    "Select items in the list or treemap first (Ctrl/Shift+click to select several)",
+                    "先にリストかツリーマップで項目を選択してください (Ctrl/Shift+クリックで複数選択)"
+                ))
+            };
+            if resp.clicked() && can {
+                actions.push(Action::DeleteSelection { permanent: false });
             }
             let target = &doc.target;
             if widgets::tool_button(
@@ -336,8 +344,9 @@ fn tree_table(ui: &mut Ui, doc: &mut Doc, icons: &mut FileIcons, actions: &mut V
     let rows: &[(u32, u16)] = if searching { &[] } else { &doc.rows };
     let results = &doc.search.results;
     let n = if searching { results.len() } else { rows.len() };
-    let selected = doc.selected;
+    let selection = &doc.selection;
     let total = t.value(t.root);
+    let mods = ui.input(|i| i.modifiers);
 
     ui.spacing_mut().item_spacing = vec2(10.0, 0.0);
     let mut builder = TableBuilder::new(ui)
@@ -369,7 +378,7 @@ fn tree_table(ui: &mut Ui, doc: &mut Doc, icons: &mut FileIcons, actions: &mut V
                 let i = row.index();
                 let (node, depth) = if searching { (results[i], 0) } else { rows[i] };
                 let nd = *t.node(node);
-                row.set_selected(selected == Some(node));
+                row.set_selected(selection.contains(node));
                 let mut toggled = false;
                 row.col(|ui| {
                     toggled = name_cell(
@@ -412,10 +421,15 @@ fn tree_table(ui: &mut Ui, doc: &mut Doc, icons: &mut FileIcons, actions: &mut V
                 let resp = row.response();
                 if toggled {
                     actions.push(Action::Toggle(node));
-                } else if resp.clicked() || resp.secondary_clicked() {
-                    actions.push(Action::Select(node));
+                } else if resp.clicked() {
+                    actions.push(Action::Click {
+                        node,
+                        list: List::Tree,
+                        ctrl: mods.command,
+                        shift: mods.shift,
+                    });
                 }
-                if resp.double_clicked() {
+                if resp.double_clicked() && !mods.command && !mods.shift {
                     // 文件像资源管理器一样用默认程序打开；文件夹展开，搜索结果里的文件夹定位到树中。
                     if !nd.is_dir() {
                         actions.push(Action::OpenFile(node));
@@ -815,18 +829,42 @@ fn treemap_view(ui: &mut Ui, doc: &mut Doc, tm: &mut Treemap, actions: &mut Vec<
             pos2(rect.left() + r[2] * sx, rect.top() + r[3] * sy),
         )
     };
-    // 选中项的外框。
-    if !stale
-        && let Some(s) = doc.selected.filter(|&s| s != doc.zoom)
-        && let Some(r) = layout.rect_of(s)
-    {
-        let r = to_screen(r).shrink(1.0);
-        ui.painter().rect_stroke(
-            r,
-            CornerRadius::ZERO,
-            Stroke::new(2.0, p.text),
-            egui::StrokeKind::Inside,
-        );
+    // 每个选中项的外框。选中了哪些块只在布局或选中项变化时重新找一遍（块的数量与像素有关，
+    // 与节点数无关，按位图判断）；上级文件夹也被选中时只画上级的框，太小的块不画。
+    let sel = &doc.selection;
+    if !stale && !sel.is_empty() {
+        let cache_key = (layout.key, sel.generation());
+        if tm.selected_tiles.as_ref().is_none_or(|c| c.0 != cache_key) {
+            let t = &doc.tree;
+            let hits = layout
+                .tiles
+                .iter()
+                .enumerate()
+                .filter(|(_, tile)| {
+                    let n = tile.node;
+                    let [x0, y0, x1, y1] = tile.rect;
+                    tile.kind != TileKind::Rest
+                        && n != doc.zoom
+                        && x1 - x0 >= 3.0
+                        && y1 - y0 >= 3.0
+                        && sel.contains(n)
+                        && !sel.contains(t.node(n).parent)
+                })
+                .map(|(i, _)| i)
+                .collect();
+            tm.selected_tiles = Some((cache_key, hits));
+        }
+        if let Some((_, hits)) = &tm.selected_tiles {
+            let painter = ui.painter();
+            for &i in hits {
+                painter.rect_stroke(
+                    to_screen(layout.tiles[i].rect).shrink(1.0),
+                    CornerRadius::ZERO,
+                    Stroke::new(2.0, p.text),
+                    egui::StrokeKind::Inside,
+                );
+            }
+        }
     }
     let hovered = resp.hover_pos().filter(|_| !stale).and_then(|pos| {
         let x = (pos.x - rect.left()) * ppp;
@@ -877,10 +915,21 @@ fn treemap_view(ui: &mut Ui, doc: &mut Doc, tm: &mut Treemap, actions: &mut Vec<
                 );
             }
         });
+        let ctrl = ui.input(|i| i.modifiers.command);
         if resp.clicked() {
-            actions.push(Action::Locate(tile.node));
+            if ctrl {
+                // Ctrl+单击：切换这一项，不改变树的展开与滚动位置。
+                actions.push(Action::Click {
+                    node: tile.node,
+                    list: List::Treemap,
+                    ctrl: true,
+                    shift: false,
+                });
+            } else {
+                actions.push(Action::Locate(tile.node));
+            }
         }
-        if resp.double_clicked() {
+        if resp.double_clicked() && !ctrl {
             // 放大一级：命中节点在当前根下的那个直接子目录。
             let child = t
                 .ancestors(tile.node)
@@ -892,7 +941,6 @@ fn treemap_view(ui: &mut Ui, doc: &mut Doc, tm: &mut Treemap, actions: &mut Vec<
         if resp.secondary_clicked()
             && let Some(pos) = resp.interact_pointer_pos()
         {
-            actions.push(Action::Select(tile.node));
             actions.push(Action::OpenMenu(tile.node, pos));
         }
     }

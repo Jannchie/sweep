@@ -25,23 +25,38 @@ pub enum Decision {
     Cancel,
 }
 
+/// 要删除的一项。
+pub struct Target {
+    /// 树里的节点；清理建议里按路径给出的项为 `NONE`。
+    pub node: u32,
+    pub path: String,
+    pub size: u64,
+    pub dir: bool,
+    /// 其中的文件数。
+    pub files: u64,
+}
+
 /// 待确认的删除。
 pub struct DeleteRequest {
-    /// (完整路径, 大小, 是否文件夹, 其中的文件数)
-    pub items: Vec<(String, u64, bool, u64)>,
+    /// 已规范化（不含被选中的文件夹里的项），不会重复计算。
+    pub items: Vec<Target>,
     /// 永久删除（不进回收站）。
     pub permanent: bool,
     /// 对话框标题里的对象，例如 "node_modules"、"3 items"。
     pub label: String,
+    /// 选中了、但不能删除而被排除的项数（驱动器根目录、NTFS 元数据）。
+    pub excluded: usize,
+    /// 发起删除时的 Doc 编号（按路径给出的请求为 0）。
+    pub doc: u64,
 }
 
 impl DeleteRequest {
     pub fn total(&self) -> u64 {
-        self.items.iter().map(|i| i.1).sum()
+        self.items.iter().map(|i| i.size).sum()
     }
 
     pub fn files(&self) -> u64 {
-        self.items.iter().map(|i| i.3).sum()
+        self.items.iter().map(|i| i.files).sum()
     }
 }
 
@@ -96,7 +111,10 @@ pub fn confirm_delete(ctx: &egui::Context, req: &DeleteRequest) -> Option<Decisi
             .inner_margin(Margin::symmetric(12, 8))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                for (path, size, dir, _) in req.items.iter().take(SHOWN) {
+                for Target {
+                    path, size, dir, ..
+                } in req.items.iter().take(SHOWN)
+                {
                     // 一行：图标、路径（过长截断）、右侧大小，都垂直居中。
                     let (row, _) =
                         ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::hover());
@@ -115,10 +133,19 @@ pub fn confirm_delete(ctx: &egui::Context, req: &DeleteRequest) -> Option<Decisi
                         egui::FontId::proportional(12.0),
                         p.faint,
                     );
-                    let mut job = egui::text::LayoutJob::simple_singleline(
-                        path.clone(),
-                        egui::FontId::proportional(12.5),
-                        p.text,
+                    // 名字在前，所在文件夹淡色跟在后面；放不下时截断的是文件夹路径。
+                    let trimmed = path.trim_end_matches('\\');
+                    let (parent, name) = trimmed.rsplit_once('\\').unwrap_or(("", trimmed));
+                    let mut job = egui::text::LayoutJob::default();
+                    job.append(
+                        name,
+                        0.0,
+                        egui::TextFormat::simple(egui::FontId::proportional(12.5), p.text),
+                    );
+                    job.append(
+                        parent,
+                        8.0,
+                        egui::TextFormat::simple(egui::FontId::proportional(11.5), p.faint),
                     );
                     job.wrap = egui::text::TextWrapping::truncate_at_width(
                         (size.left() - row.left() - 32.0).max(40.0),
@@ -141,6 +168,18 @@ pub fn confirm_delete(ctx: &egui::Context, req: &DeleteRequest) -> Option<Decisi
                     );
                 }
             });
+        if req.excluded > 0 {
+            let n = n_items(req.excluded as u64);
+            ui.label(
+                RichText::new(tf!(
+                    "已跳过 {n}（不能删除：驱动器或扫描的根文件夹、NTFS 元数据）。",
+                    "Skipping {n} that can't be deleted (drive roots, the scanned folder itself, NTFS metadata).",
+                    "削除できない {n}はスキップします (ドライブやスキャンしたフォルダー自体、NTFS メタデータ)。"
+                ))
+                .size(12.5)
+                .color(p.muted),
+            );
+        }
         ui.add_space(2.0);
         if req.permanent {
             warning(

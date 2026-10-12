@@ -12,6 +12,7 @@ mod icons_gen;
 mod menu;
 mod os;
 mod scan_view;
+mod selection;
 mod settings;
 mod settings_view;
 mod start_view;
@@ -29,7 +30,7 @@ use sweep_scan::system::Volume;
 use sweep_scan::{NONE, Scan, flags, t, tf};
 
 use cleanup::Item;
-use dialogs::{Decision, DeleteRequest, Toast};
+use dialogs::{Decision, DeleteRequest, Target, Toast};
 use doc::{Doc, Mutation};
 use file_icons::FileIcons;
 use icons_gen::Icon;
@@ -77,8 +78,25 @@ enum View {
 }
 
 /// 各页面产生的操作，统一由 [`App::apply`] 执行。
+/// 单击发生在哪个列表里：Shift 范围选择按这个列表当前的顺序计算。
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum List {
+    /// 分析页的目录树（搜索时是搜索结果）。
+    Tree,
+    /// 清理页的"最大的文件"。
+    Largest,
+    /// 矩形树图：没有行的顺序，只支持单击与 Ctrl+单击。
+    Treemap,
+}
+
 pub enum Action {
-    Select(u32),
+    /// 在列表里单击一项（带修饰键），按资源管理器的规则改选中项。
+    Click {
+        node: u32,
+        list: List,
+        ctrl: bool,
+        shift: bool,
+    },
     Toggle(u32),
     /// 矩形树图放大到这个目录（文件取所在目录）。
     ZoomTo(u32),
@@ -86,6 +104,7 @@ pub enum Action {
     /// 切到分析页，在树里展开并选中。
     Locate(u32),
     LocatePath(String),
+    /// 右键菜单。右键的项没被选中时先只选它；已选中时菜单作用于整个选择。
     OpenMenu(u32, egui::Pos2),
     Reveal(String),
     Open(String),
@@ -100,10 +119,14 @@ pub enum Action {
         label: String,
         permanent: bool,
     },
-    DeleteNodes {
-        nodes: Vec<u32>,
+    /// 删除当前选中的项（规范化、排除不能删除的之后弹出确认框）。
+    DeleteSelection {
         permanent: bool,
     },
+    /// Esc：取消全部选择。
+    ClearSelection,
+    /// Ctrl+A。
+    SelectAll(List),
     Rescan(u32),
     EmptyRecycleBin(u64),
     Run(String),
@@ -124,7 +147,10 @@ enum Modal {
 enum Job {
     Toast(Toast),
     Deleted {
-        results: Vec<(String, Result<(), String>)>,
+        /// 发起删除时的 Doc 编号；与当前的不同时节点下标作废，按路径查找。
+        doc: u64,
+        /// (节点下标或 NONE, 路径, 结果)
+        results: Vec<(u32, String, Result<(), String>)>,
         permanent: bool,
         size: u64,
     },
@@ -162,6 +188,8 @@ struct App {
     focus_search: bool,
     /// 最近一秒内的重绘时刻，用来在持续高帧率输入时限帧。
     passes: VecDeque<Instant>,
+    /// 上一帧显示的页面，用来发现切到了清理页。
+    last_view: View,
 }
 
 impl App {
@@ -191,6 +219,7 @@ impl App {
             path_input: String::new(),
             focus_search: false,
             passes: VecDeque::new(),
+            last_view: View::Disks,
         };
         app.load_volumes(ctx);
         // 命令行参数作为扫描目标，例如 `sweep D:\data`。
@@ -262,9 +291,38 @@ impl App {
 
     fn apply(&mut self, ctx: &egui::Context, action: Action) {
         match action {
-            Action::Select(n) => {
+            Action::Click {
+                node,
+                list,
+                ctrl,
+                shift,
+            } => {
+                let Some(d) = &mut self.doc else { return };
+                let order = match list {
+                    List::Tree => d.visible(),
+                    List::Largest => d.largest(),
+                    List::Treemap => Vec::new(),
+                };
+                match order.iter().position(|&n| n == node) {
+                    Some(i) => d.selection.click(|k| order[k], order.len(), i, ctrl, shift),
+                    None if ctrl => d.selection.toggle(node),
+                    None => d.selection.set_single(node),
+                }
+            }
+            Action::ClearSelection => {
                 if let Some(d) = &mut self.doc {
-                    d.selected = Some(n);
+                    d.selection.clear();
+                }
+            }
+            Action::SelectAll(list) => {
+                if let Some(d) = &mut self.doc {
+                    match list {
+                        List::Largest => {
+                            let all = d.largest();
+                            d.selection.select_all(all);
+                        }
+                        _ => d.select_all_in_view(),
+                    }
                 }
             }
             Action::Toggle(n) => {
@@ -300,7 +358,14 @@ impl App {
                     os::reveal(&p);
                 }
             }
-            Action::OpenMenu(n, pos) => self.menu = Some((n, pos)),
+            Action::OpenMenu(n, pos) => {
+                if let Some(d) = &mut self.doc
+                    && !d.selection.contains(n)
+                {
+                    d.selection.set_single(n);
+                }
+                self.menu = Some((n, pos));
+            }
             Action::Reveal(p) => os::reveal(&p),
             Action::Open(p) => os::open(&p),
             Action::OpenFile(n) => {
@@ -321,7 +386,13 @@ impl App {
             }
             Action::Copy(text) => {
                 ctx.copy_text(text.clone());
-                self.notify_ok(t!("已复制", "Copied", "コピーしました").into(), Some(text));
+                // 多行（多选时的路径列表）只报行数，不把整段塞进通知。
+                let lines = text.lines().count() as u64;
+                let detail = if lines > 1 { n_items(lines) } else { text };
+                self.notify_ok(
+                    t!("已复制", "Copied", "コピーしました").into(),
+                    Some(detail),
+                );
             }
             Action::Properties(p) => os::properties(&p),
             Action::Delete {
@@ -343,39 +414,22 @@ impl App {
                     self.modal = Some(Modal::Delete(DeleteRequest {
                         items: items
                             .into_iter()
-                            .map(|i| (i.path, i.size, i.dir, i.files))
+                            .map(|i| Target {
+                                node: NONE,
+                                path: i.path,
+                                size: i.size,
+                                dir: i.dir,
+                                files: i.files,
+                            })
                             .collect(),
                         label,
                         permanent,
+                        excluded: 0,
+                        doc: 0,
                     }));
                 }
             }
-            Action::DeleteNodes { nodes, permanent } => {
-                let Some(d) = &self.doc else { return };
-                let t = &d.tree;
-                let nodes: Vec<u32> = nodes.into_iter().filter(|&n| deletable(t, n)).collect();
-                let label = match nodes.as_slice() {
-                    [n] => t.name(*n).to_string(),
-                    v => n_items(v.len() as u64),
-                };
-                let items = nodes
-                    .iter()
-                    .map(|&n| Item {
-                        path: t.path(n),
-                        size: t.value(n),
-                        dir: t.node(n).is_dir(),
-                        files: t.node(n).files as u64,
-                    })
-                    .collect();
-                self.apply(
-                    ctx,
-                    Action::Delete {
-                        items,
-                        label,
-                        permanent,
-                    },
-                );
-            }
+            Action::DeleteSelection { permanent } => self.delete_selection(permanent),
             Action::Rescan(n) => self.rescan(ctx, n),
             Action::EmptyRecycleBin(size) => self.modal = Some(Modal::EmptyRecycleBin(size)),
             Action::Run(cmd) => {
@@ -413,6 +467,68 @@ impl App {
                 }
             }
         }
+    }
+
+    /// Delete / Shift+Delete、工具栏和右键菜单的删除：规范化选中项、排除不能删除的，弹出确认框。
+    fn delete_selection(&mut self, permanent: bool) {
+        if self.deleting {
+            self.notify_err(
+                t!(
+                    "上一次删除还没有完成",
+                    "The previous deletion is still running",
+                    "前回の削除がまだ完了していません"
+                )
+                .into(),
+                None,
+            );
+            return;
+        }
+        let Some(d) = &self.doc else { return };
+        if d.selection.is_empty() {
+            return;
+        }
+        let t = &d.tree;
+        let (nodes, excluded) = d.selection.deletion_set(t, deletable);
+        if nodes.is_empty() {
+            self.notify_err(
+                t!(
+                    "选中的项目不能删除",
+                    "The selected items can't be deleted",
+                    "選択した項目は削除できません"
+                )
+                .into(),
+                Some(
+                    t!(
+                        "驱动器或扫描的根文件夹、NTFS 元数据不能删除。",
+                        "Drive roots, the scanned folder itself and NTFS metadata can't be deleted.",
+                        "ドライブやスキャンしたフォルダー自体、NTFS メタデータは削除できません。"
+                    )
+                    .into(),
+                ),
+            );
+            return;
+        }
+        let label = match nodes.as_slice() {
+            [n] => t.name(*n).to_string(),
+            v => n_items(v.len() as u64),
+        };
+        let items = nodes
+            .iter()
+            .map(|&n| Target {
+                node: n,
+                path: t.path(n),
+                size: t.value(n),
+                dir: t.node(n).is_dir(),
+                files: t.node(n).files as u64,
+            })
+            .collect();
+        self.modal = Some(Modal::Delete(DeleteRequest {
+            items,
+            label,
+            permanent,
+            excluded,
+            doc: d.id,
+        }));
     }
 
     /// 重新扫描一个目录，完成后替换树里的这一段。
@@ -460,7 +576,9 @@ impl App {
             Modal::Delete(req) => {
                 let permanent = req.permanent;
                 let size = req.total();
-                let paths: Vec<String> = req.items.into_iter().map(|i| i.0).collect();
+                let doc = req.doc;
+                let targets: Vec<(u32, String)> =
+                    req.items.into_iter().map(|i| (i.node, i.path)).collect();
                 self.deleting = true;
                 let title = if permanent {
                     t!("正在删除…", "Deleting…", "削除しています…")
@@ -474,14 +592,15 @@ impl App {
                 self.toasts
                     .push(Toast::ok(title.into(), None).tag(TAG_DELETE));
                 self.spawn(ctx, move || {
-                    let results = paths
+                    let results = targets
                         .into_iter()
-                        .map(|p| {
+                        .map(|(n, p)| {
                             let r = os::delete(&p, permanent);
-                            (p, r)
+                            (n, p, r)
                         })
                         .collect();
                     Job::Deleted {
+                        doc,
                         results,
                         permanent,
                         size,
@@ -524,10 +643,11 @@ impl App {
                     }
                 }
                 Job::Deleted {
+                    doc,
                     results,
                     permanent,
                     size,
-                } => self.after_delete(ctx, results, permanent, size),
+                } => self.after_delete(ctx, doc, results, permanent, size),
                 Job::RecycleEmptied(r) => {
                     match r {
                         Ok(()) => self.notify_ok(
@@ -555,27 +675,41 @@ impl App {
         }
     }
 
-    /// 删除完成：删掉的从树上摘除，没删干净的目录重新扫描，不必整盘重扫。
+    /// 删除完成：删掉的一次性从树上摘除（选中项随之去掉），没删干净的目录重新扫描，不必整盘重扫。
     fn after_delete(
         &mut self,
         ctx: &egui::Context,
-        results: Vec<(String, Result<(), String>)>,
+        doc: u64,
+        results: Vec<(u32, String, Result<(), String>)>,
         permanent: bool,
         size: u64,
     ) {
         self.deleting = false;
         self.toasts.retain(|t| t.tag != TAG_DELETE);
-        let failed: Vec<&(String, Result<(), String>)> =
-            results.iter().filter(|r| r.1.is_err()).collect();
+        let failed: Vec<(&String, &String)> = results
+            .iter()
+            .filter_map(|r| r.2.as_ref().err().map(|e| (&r.1, e)))
+            .collect();
         let mut rescan = Vec::new();
         if let Some(d) = &mut self.doc {
-            for (path, r) in &results {
-                let Some(n) = d.tree.find(path) else { continue };
+            let mut removed = Vec::new();
+            for (node, path, r) in &results {
+                // 同一棵树、节点还在时直接用下标（十万项也不用逐个按路径查找），否则按路径找。
+                let same = d.id == doc && *node != NONE;
+                let n = if same && !d.tree.node(*node).has(flags::DELETED) {
+                    Some(*node)
+                } else {
+                    d.tree.find(path)
+                };
+                let Some(n) = n else { continue };
                 match r {
-                    Ok(()) => d.mutate(Mutation::Remove(n)),
+                    Ok(()) => removed.push(n),
                     Err(_) if d.tree.node(n).is_dir() => rescan.push(n),
                     Err(_) => {}
                 }
+            }
+            if !removed.is_empty() {
+                d.mutate(Mutation::Remove(removed));
             }
         }
         for n in rescan {
@@ -605,7 +739,7 @@ impl App {
                     Some(tf!("共 {size}", "{size} in total", "合計 {size}")),
                 );
             }
-            Some((p, Err(e))) => {
+            Some((p, e)) => {
                 let title = match (done, permanent) {
                     (0, true) => t!("无法删除", "Couldn't delete", "削除できませんでした").into(),
                     (0, false) => t!(
@@ -627,7 +761,6 @@ impl App {
                 };
                 self.notify_err(title, Some(format!("{p}: {e}")));
             }
-            Some(_) => {}
         }
         self.after_space_change(ctx);
     }
@@ -638,8 +771,42 @@ impl App {
         self.load_volumes(ctx);
     }
 
-    /// 方向键、Enter、Backspace、Delete 等。只在分析页、没有输入焦点和对话框时生效。
+    /// 分析页和清理页共用的快捷键：Delete / Shift+Delete、Ctrl+A、Esc、Ctrl+C。
+    /// 只在没有输入焦点、对话框和菜单时调用。
+    fn selection_keys(&mut self, ctx: &egui::Context, list: List) -> Option<Action> {
+        let d = self.doc.as_ref()?;
+        let (del, shift, all, esc, copy) = ctx.input(|i| {
+            (
+                i.key_pressed(Key::Delete),
+                i.modifiers.shift,
+                i.modifiers.command && i.key_pressed(Key::A),
+                i.key_pressed(Key::Escape),
+                i.modifiers.command && i.key_pressed(Key::C),
+            )
+        });
+        if del {
+            return Some(Action::DeleteSelection { permanent: shift });
+        }
+        if all {
+            return Some(Action::SelectAll(list));
+        }
+        if esc && !d.selection.is_empty() {
+            return Some(Action::ClearSelection);
+        }
+        if copy && !d.selection.is_empty() {
+            let t = &d.tree;
+            let paths: Vec<String> = d.selection.items().iter().map(|&n| t.path(n)).collect();
+            return Some(Action::Copy(paths.join("\r\n")));
+        }
+        None
+    }
+
+    /// 方向键、Enter、Backspace 等。只在分析页、没有输入焦点和对话框时生效。
+    /// 单项操作（Enter、F5、←/→）作用于键盘光标所在的项。
     fn keyboard(&mut self, ctx: &egui::Context) -> Option<Action> {
+        if let Some(a) = self.selection_keys(ctx, List::Tree) {
+            return Some(a);
+        }
         let d = self.doc.as_mut()?;
         let (up, down, home, end, pgup, pgdn) = ctx.input(|i| {
             (
@@ -651,28 +818,17 @@ impl App {
                 i.key_pressed(Key::PageDown),
             )
         });
-        let (left, right, enter, back, del, shift, copy, f5) = ctx.input(|i| {
+        let (left, right, enter, back, shift, f5) = ctx.input(|i| {
             (
                 i.key_pressed(Key::ArrowLeft),
                 i.key_pressed(Key::ArrowRight),
                 i.key_pressed(Key::Enter),
                 i.key_pressed(Key::Backspace),
-                i.key_pressed(Key::Delete),
                 i.modifiers.shift,
-                i.modifiers.command && i.key_pressed(Key::C),
                 i.key_pressed(Key::F5),
             )
         });
-        let sel = d.selected;
-        if del {
-            return sel.map(|n| Action::DeleteNodes {
-                nodes: vec![n],
-                permanent: shift,
-            });
-        }
-        if copy {
-            return sel.map(|n| Action::Copy(d.tree.path(n)));
-        }
+        let sel = d.selection.focused_selected();
         if f5 {
             return sel.filter(|&n| d.tree.node(n).is_dir()).map(Action::Rescan);
         }
@@ -696,7 +852,7 @@ impl App {
         if rows == 0 {
             return None;
         }
-        let cur = d.selected_row();
+        let cur = d.focus_row();
         let page = 15;
         let next = if home {
             Some(0)
@@ -714,7 +870,8 @@ impl App {
             None
         };
         if let Some(r) = next {
-            d.select_row(r);
+            // Shift+方向键：从锚点扩展；否则只选新的一行。
+            d.select_row(r, shift);
             return None;
         }
         let n = sel?;
@@ -992,6 +1149,16 @@ impl eframe::App for App {
                 .fill(p.bg)
                 .inner_margin(Margin::symmetric(20, 8)),
         );
+        // 清理页只显示"最大的文件"：进入时把选中项收窄到这个列表里，Delete 和右键菜单
+        // 不会作用于分析页里选中、在这里看不到的项。
+        if self.view == View::Cleanup
+            && self.last_view != View::Cleanup
+            && let Some(d) = &mut self.doc
+        {
+            let shown: std::collections::HashSet<u32> = d.largest().into_iter().collect();
+            d.selection.retain(|n| shown.contains(&n));
+        }
+        self.last_view = self.view;
         let mut actions = Vec::new();
         match self.view {
             View::Disks => {
@@ -1065,9 +1232,10 @@ impl eframe::App for App {
 
         // 右键菜单（固定在点击位置）。
         if let Some((n, pos)) = self.menu
-            && let Some(d) = &self.doc
+            && let Some(d) = &mut self.doc
         {
-            let (a, open) = menu::node_menu(&ctx, &d.tree, n, pos, self.deleting);
+            let summary = d.summary();
+            let (a, open) = menu::node_menu(&ctx, d, n, pos, summary, self.deleting);
             if !open {
                 self.menu = None;
             }
@@ -1112,15 +1280,14 @@ impl eframe::App for App {
             self.view = View::Analyze;
             self.focus_search = true;
         }
-        if self.view == View::Analyze
-            && self.modal.is_none()
-            && self.menu.is_none()
-            && self.scan.is_none()
-            && !typing
-            && let Some(a) = self.keyboard(&ctx)
-        {
-            actions.push(a);
-        }
+        // 快捷键只在没有输入焦点、对话框和菜单时生效。
+        let idle = self.modal.is_none() && self.menu.is_none() && self.scan.is_none() && !typing;
+        let key_action = match self.view {
+            View::Analyze if idle => self.keyboard(&ctx),
+            View::Cleanup if idle => self.selection_keys(&ctx, List::Largest),
+            _ => None,
+        };
+        actions.extend(key_action);
         for a in actions {
             self.apply(&ctx, a);
         }
