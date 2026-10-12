@@ -414,9 +414,12 @@ fn tree_table(ui: &mut Ui, doc: &mut Doc, icons: &mut FileIcons, actions: &mut V
                     actions.push(Action::Select(node));
                 }
                 if resp.double_clicked() {
-                    if searching {
+                    // 文件像资源管理器一样用默认程序打开；文件夹展开，搜索结果里的文件夹定位到树中。
+                    if !nd.is_dir() {
+                        actions.push(Action::OpenFile(node));
+                    } else if searching {
                         actions.push(Action::Locate(node));
-                    } else if nd.is_dir() {
+                    } else {
                         actions.push(Action::Toggle(node));
                     }
                 }

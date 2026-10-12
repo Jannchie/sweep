@@ -95,6 +95,49 @@ pub fn open(path: &str) {
     }
 }
 
+/// 用默认程序打开文件，与在资源管理器里双击相同。没有关联程序时弹出系统的"打开方式"对话框。
+/// 可能阻塞（启动程序、网络盘），在后台线程调用。
+pub fn open_file(path: &str) -> Result<(), String> {
+    use windows::Win32::Foundation::ERROR_NO_ASSOCIATION;
+    use windows::Win32::UI::Shell::{
+        OAIF_ALLOW_REGISTRATION, OAIF_EXEC, OAIF_REGISTER_EXT, OPENASINFO, SEE_MASK_FLAG_NO_UI,
+        SHELLEXECUTEINFOW, SHOpenWithDialog, ShellExecuteExW,
+    };
+    com();
+    let p = wide(path);
+    let mut info = SHELLEXECUTEINFOW {
+        cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
+        // 错误由我们自己用通知显示，不弹系统的错误框。
+        fMask: SEE_MASK_FLAG_NO_UI,
+        hwnd: owner(),
+        lpVerb: w!("open"),
+        lpFile: PCWSTR(p.as_ptr()),
+        nShow: SW_SHOWNORMAL.0,
+        ..Default::default()
+    };
+    match unsafe { ShellExecuteExW(&mut info) } {
+        Ok(()) => Ok(()),
+        Err(e) if e.code() == ERROR_NO_ASSOCIATION.to_hresult() => {
+            let info = OPENASINFO {
+                pcszFile: PCWSTR(p.as_ptr()),
+                pcszClass: PCWSTR::null(),
+                oaifInFlags: OAIF_ALLOW_REGISTRATION | OAIF_REGISTER_EXT | OAIF_EXEC,
+            };
+            match unsafe { SHOpenWithDialog(Some(owner()), &info) } {
+                // 用户在"打开方式"里取消不算错误。
+                Err(e)
+                    if e.code() != windows::Win32::Foundation::E_ABORT
+                        && e.code() != windows::Win32::Foundation::ERROR_CANCELLED.to_hresult() =>
+                {
+                    Err(error_text(&e))
+                }
+                _ => Ok(()),
+            }
+        }
+        Err(e) => Err(error_text(&e)),
+    }
+}
+
 /// 系统的"属性"对话框（非模态，立即返回）。
 pub fn properties(path: &str) {
     let p = wide(path);

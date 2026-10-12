@@ -89,6 +89,8 @@ pub enum Action {
     OpenMenu(u32, egui::Pos2),
     Reveal(String),
     Open(String),
+    /// 用默认程序打开文件（没有关联程序时弹出"打开方式"）。
+    OpenFile(u32),
     /// 复制文字到剪贴板。
     Copy(String),
     Properties(String),
@@ -133,6 +135,8 @@ enum Job {
     Picked(String),
     Volumes(Vec<Volume>),
     RecycleEmptied(Result<(), String>),
+    /// 没有需要处理的结果。
+    Nothing,
 }
 
 struct App {
@@ -299,6 +303,22 @@ impl App {
             Action::OpenMenu(n, pos) => self.menu = Some((n, pos)),
             Action::Reveal(p) => os::reveal(&p),
             Action::Open(p) => os::open(&p),
+            Action::OpenFile(n) => {
+                let Some(d) = &self.doc else { return };
+                let path = d.tree.path(n);
+                let name = d.tree.name(n).to_string();
+                self.spawn(ctx, move || match os::open_file(&path) {
+                    Ok(()) => Job::Nothing,
+                    Err(e) => Job::Toast(Toast::err(
+                        tf!(
+                            "无法打开 {name}",
+                            "Couldn't open {name}",
+                            "{name} を開けませんでした"
+                        ),
+                        Some(e),
+                    )),
+                });
+            }
             Action::Copy(text) => {
                 ctx.copy_text(text.clone());
                 self.notify_ok(t!("已复制", "Copied", "コピーしました").into(), Some(text));
@@ -487,6 +507,7 @@ impl App {
                     }
                 }
                 Job::Picked(p) => self.start_scan(ctx, &p),
+                Job::Nothing => {}
                 Job::Rescanned { node, tree } => {
                     self.toasts.retain(|t| t.tag != TAG_RESCAN);
                     if let Some(d) = &mut self.doc {
@@ -656,7 +677,14 @@ impl App {
             return sel.filter(|&n| d.tree.node(n).is_dir()).map(Action::Rescan);
         }
         if enter {
-            return sel.map(Action::ZoomTo);
+            // 与双击一致：文件用默认程序打开，文件夹在矩形树图中放大。
+            return sel.map(|n| {
+                if d.tree.node(n).is_dir() {
+                    Action::ZoomTo(n)
+                } else {
+                    Action::OpenFile(n)
+                }
+            });
         }
         if back {
             return Some(Action::ZoomOut);
