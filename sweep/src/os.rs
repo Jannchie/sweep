@@ -10,9 +10,10 @@ use windows::Win32::System::Com::{
 use windows::Win32::UI::Shell::{
     FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_WANTNUKEWARNING, FOFX_RECYCLEONDELETE,
     FOS_FORCEFILESYSTEM, FOS_PICKFOLDERS, FileOpenDialog, FileOperation, IFileOpenDialog,
-    IFileOperation, IShellItem, SHCreateItemFromParsingName, SHERB_NOCONFIRMATION, SHERB_NOSOUND,
-    SHEmptyRecycleBinW, SHOP_FILEPATH, SHObjectProperties, SHQUERYRBINFO, SHQueryRecycleBinW,
-    SIGDN_FILESYSPATH, ShellExecuteW,
+    IFileOperation, ILCreateFromPathW, ILFree, IShellItem, SHCreateItemFromParsingName,
+    SHERB_NOCONFIRMATION, SHERB_NOSOUND, SHEmptyRecycleBinW, SHOP_FILEPATH, SHObjectProperties,
+    SHOpenFolderAndSelectItems, SHQUERYRBINFO, SHQueryRecycleBinW, SIGDN_FILESYSPATH,
+    ShellExecuteW,
 };
 use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 use windows::core::{PCWSTR, w};
@@ -32,11 +33,50 @@ fn com() {
     }
 }
 
-/// 在资源管理器中定位（选中）这一项。
+/// 在资源管理器中定位（选中）这一项。在后台线程里调用 Shell，不阻塞界面。
+///
+/// 不用 `explorer /select,路径`：路径里有空格时参数会被整个加上引号，逗号也会把路径截断，
+/// 资源管理器解析失败就退回到默认位置。卷根目录没有"所在文件夹"，直接打开它；
+/// 无法解析的项（例如已被删除）退而打开它所在的文件夹。
 pub fn reveal(path: &str) {
-    let _ = std::process::Command::new("explorer")
-        .arg(format!("/select,{path}"))
-        .spawn();
+    let path = path.to_string();
+    std::thread::spawn(move || reveal_now(&path));
+}
+
+fn reveal_now(path: &str) {
+    com();
+    let root = sweep_scan::is_volume_root(path);
+    if root || !select_in_folder(path) {
+        let folder = if root || std::path::Path::new(path).is_dir() {
+            path
+        } else {
+            parent(path)
+        };
+        open(folder);
+    }
+}
+
+/// `C:\a\b.txt` → `C:\a`，`C:\a` → `C:\`。
+fn parent(path: &str) -> &str {
+    match path.trim_end_matches('\\').rfind('\\') {
+        Some(i) if i <= 2 => &path[..i + 1],
+        Some(i) => &path[..i],
+        None => path,
+    }
+}
+
+/// 打开所在文件夹并选中这一项。
+fn select_in_folder(path: &str) -> bool {
+    let p = wide(path);
+    unsafe {
+        let pidl = ILCreateFromPathW(PCWSTR(p.as_ptr()));
+        if pidl.is_null() {
+            return false;
+        }
+        let ok = SHOpenFolderAndSelectItems(pidl, None, 0).is_ok();
+        ILFree(Some(pidl));
+        ok
+    }
 }
 
 /// 用默认方式打开（文件夹在资源管理器里打开）。
@@ -180,6 +220,14 @@ pub fn relaunch_elevated(args: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parent_folders() {
+        assert_eq!(parent(r"C:\a\b.txt"), r"C:\a");
+        assert_eq!(parent(r"C:\a"), r"C:\");
+        assert_eq!(parent(r"C:\a b,c\d"), r"C:\a b,c");
+        assert_eq!(parent(r"\\nas\share\x.iso"), r"\\nas\share");
+    }
 
     /// 只在自己建的临时目录里试永久删除（回收站删除会在用户的回收站里留下条目，不放进单元测试）。
     #[test]
