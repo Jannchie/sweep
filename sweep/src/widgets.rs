@@ -58,57 +58,31 @@ pub fn brand_mark(ui: &mut Ui, size: f32) -> Rect {
 
 /// 水平点阵进度条。
 pub fn meter(painter: &Painter, rect: Rect, frac: f32, color: Color32, track: Color32) {
-    // 与图表同一套点阵语言：一排方点，边长等于条的高度，点距微调到正好铺满；
-    // 按比例从左往右点亮，最后一个点按余数调透明度，数值变化是连续的。
-    let dot = rect.height();
-    let n = (((rect.width() + dot * 0.5) / (dot * 1.5)).floor() as usize).max(2);
-    let pitch = (rect.width() - dot) / (n - 1) as f32;
+    // 与图表同一套点阵语言：一排方点，边长等于条的高度，按比例从左往右点亮，
+    // 最后一个点按余数调透明度，数值变化是连续的。
+    // 点的边长和每个点的起点都取整到物理像素：每个点一样大、四边都清晰，
+    // 不会因为落在半个像素上而一边发虚、看起来大小不一或没对齐；点距最多差 1 个像素，整排仍铺满。
+    let ppp = painter.pixels_per_point();
+    let px = |v: f32| (v * ppp).round();
+    let dot = px(rect.height()).max(1.0);
+    let (left, top) = (px(rect.left()), px(rect.top()));
+    let width = px(rect.right()) - left;
+    let n = (((width + dot * 0.5) / (dot * 1.5)).floor() as usize).max(2);
+    let pitch = (width - dot) / (n - 1) as f32;
     let lit = frac.clamp(0.0, 1.0) * n as f32;
-    let feather = 1.0 / painter.pixels_per_point();
     let mut mesh = Mesh::default();
     for i in 0..n {
         let r = Rect::from_min_size(
-            pos2(rect.left() + i as f32 * pitch, rect.top()),
-            vec2(dot, dot),
+            pos2((left + i as f32 * pitch).round() / ppp, top / ppp),
+            vec2(dot / ppp, dot / ppp),
         );
+        mesh.add_colored_rect(r, track);
         let on = (lit - i as f32).clamp(0.0, 1.0);
-        aa_dot(&mut mesh, r, track, feather);
         if on > 0.0 {
-            aa_dot(&mut mesh, r, color.gamma_multiply(on), feather);
+            mesh.add_colored_rect(r, color.gamma_multiply(on));
         }
     }
     painter.add(Shape::mesh(mesh));
-}
-
-/// 抗锯齿方点：内圈实色，外面一圈 1 物理像素宽、渐变到透明（与 egui 画形状时的 feathering 相同）。
-/// 位置和尺寸是小数也不会被硬切成不同的像素宽度。
-fn aa_dot(mesh: &mut Mesh, rect: Rect, color: Color32, feather: f32) {
-    let inner = rect.shrink(feather / 2.0);
-    let outer = rect.expand(feather / 2.0);
-    let base = mesh.vertices.len() as u32;
-    for p in [
-        inner.left_top(),
-        inner.right_top(),
-        inner.right_bottom(),
-        inner.left_bottom(),
-    ] {
-        mesh.colored_vertex(p, color);
-    }
-    for p in [
-        outer.left_top(),
-        outer.right_top(),
-        outer.right_bottom(),
-        outer.left_bottom(),
-    ] {
-        mesh.colored_vertex(p, Color32::TRANSPARENT);
-    }
-    mesh.add_triangle(base, base + 1, base + 2);
-    mesh.add_triangle(base, base + 2, base + 3);
-    for k in 0..4 {
-        let n = (k + 1) % 4;
-        mesh.add_triangle(base + k, base + 4 + k, base + 4 + n);
-        mesh.add_triangle(base + k, base + 4 + n, base + n);
-    }
 }
 
 // ---------------------------------------------------------------- 工具栏控件
