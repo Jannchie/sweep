@@ -194,9 +194,10 @@ fn volume_card(
         painter.rect_filled(bar, CornerRadius::same(2), p.accent);
     }
     let inner = rect.shrink(16.0);
-    let glyph = match v.kind {
-        DriveKind::Removable => Icon::UsbDrive,
-        DriveKind::Network => Icon::Cloud,
+    let glyph = match (v.kind, v.ssd) {
+        (DriveKind::Removable, _) => Icon::UsbDrive,
+        (DriveKind::Network, _) => Icon::Cloud,
+        (_, Some(true)) => Icon::Ssd,
         _ => Icon::HardDrive,
     };
     widgets::icon(

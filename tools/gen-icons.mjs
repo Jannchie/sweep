@@ -23,6 +23,7 @@ const USED = [
   ['File', 'file'],
   ['Files', 'files'],
   ['HardDrive', 'hard-drive'],
+  ['Ssd', 'ssd'],
   ['UsbDrive', 'usb-drive'],
   ['Cloud', 'cloud'],
   ['Trash', 'trash'],

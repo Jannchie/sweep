@@ -108,6 +108,8 @@ pub struct Volume {
     pub label: String,
     pub fs: String,
     pub kind: DriveKind,
+    /// 所在设备是否为固态盘（没有寻道开销）；查询不到时为 None。
+    pub ssd: Option<bool>,
     pub total: u64,
     pub free: u64,
 }
@@ -159,10 +161,62 @@ pub fn volume(root: &str) -> Option<Volume> {
         root: root.to_string(),
         label: from_wide(&label),
         fs: from_wide(&fs),
+        ssd: matches!(kind, DriveKind::Fixed | DriveKind::Removable)
+            .then(|| is_ssd(root))
+            .flatten(),
         kind,
         total,
         free,
     })
+}
+
+/// 卷所在设备是否为固态盘：查询存储设备的寻道开销（固态盘没有）。
+/// 打开卷时不申请读写权限，普通用户也能查询。
+fn is_ssd(root: &str) -> Option<bool> {
+    use windows::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+    };
+    use windows::Win32::System::IO::DeviceIoControl;
+    use windows::Win32::System::Ioctl::{
+        DEVICE_SEEK_PENALTY_DESCRIPTOR, IOCTL_STORAGE_QUERY_PROPERTY, PropertyStandardQuery,
+        STORAGE_PROPERTY_QUERY, StorageDeviceSeekPenaltyProperty,
+    };
+
+    let device = wide(&format!(r"\\.\{}", root.trim_end_matches('\\')));
+    let handle = unsafe {
+        CreateFileW(
+            PCWSTR(device.as_ptr()),
+            0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            None,
+            OPEN_EXISTING,
+            FILE_FLAGS_AND_ATTRIBUTES(0),
+            None,
+        )
+    }
+    .ok()?;
+    let handle = unsafe { OwnedHandle::from_raw_handle(handle.0) };
+    let query = STORAGE_PROPERTY_QUERY {
+        PropertyId: StorageDeviceSeekPenaltyProperty,
+        QueryType: PropertyStandardQuery,
+        ..Default::default()
+    };
+    let mut out = DEVICE_SEEK_PENALTY_DESCRIPTOR::default();
+    let mut returned = 0u32;
+    unsafe {
+        DeviceIoControl(
+            HANDLE(handle.as_raw_handle()),
+            IOCTL_STORAGE_QUERY_PROPERTY,
+            Some(&query as *const _ as *const _),
+            size_of::<STORAGE_PROPERTY_QUERY>() as u32,
+            Some(&mut out as *mut _ as *mut _),
+            size_of::<DEVICE_SEEK_PENALTY_DESCRIPTOR>() as u32,
+            Some(&mut returned),
+            None,
+        )
+    }
+    .ok()?;
+    Some(!out.IncursSeekPenalty)
 }
 
 /// (当前工作集, 峰值工作集, 提交的私有内存)，字节。
