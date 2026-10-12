@@ -177,8 +177,10 @@ impl<'a> Attr<'a> {
         self.raw
             .get(off..off + len * 2)
             .map(|b| {
-                b.chunks_exact(2)
-                    .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                b.as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|&c| u16::from_le_bytes(c))
                     .collect()
             })
             .unwrap_or_default()
@@ -293,8 +295,10 @@ pub fn file_name(v: &[u8]) -> Option<FileName> {
     let namespace = *v.get(0x41)?;
     let name = v
         .get(0x42..0x42 + len * 2)?
-        .chunks_exact(2)
-        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&c| u16::from_le_bytes(c))
         .collect();
     Some(FileName {
         parent: u64_at(v, 0)?,

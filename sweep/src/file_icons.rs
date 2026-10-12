@@ -136,16 +136,16 @@ fn to_rgba(icon: HICON, size: i32) -> Option<(usize, Vec<u8>)> {
     let color = read_bits(dc, info.hbmColor, size);
     let result = color.map(|mut px| {
         // 老式图标没有 alpha 通道，用 AND 掩码补：掩码为 0 的像素不透明。
-        if px.chunks_exact(4).all(|p| p[3] == 0) {
+        if px.as_chunks::<4>().0.iter().all(|p| p[3] == 0) {
             let mask = read_bits(dc, info.hbmMask, size);
-            for (i, p) in px.chunks_exact_mut(4).enumerate() {
+            for (i, p) in px.as_chunks_mut::<4>().0.iter_mut().enumerate() {
                 p[3] = match &mask {
                     Some(m) if m[i * 4] != 0 => 0,
                     _ => 255,
                 };
             }
         }
-        for p in px.chunks_exact_mut(4) {
+        for p in px.as_chunks_mut::<4>().0 {
             p.swap(0, 2); // BGRA → RGBA
         }
         (size as usize, px)
