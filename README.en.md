@@ -18,6 +18,7 @@ Compared with WinDirStat:
 - Incremental scans: scanning the same NTFS drive again loads the previous result and updates only the folders that changed since, as recorded in the USN change journal. On the C: drive above this takes 1.6 s instead of 5.5 s; when the journal no longer covers the gap, a full scan runs instead.
 - Items are ranked by size on disk by default, so cloud placeholders, compressed and sparse files count as the space you get back by deleting them; hard links are counted once.
 - The Clean up page lists common places to reclaim space: temporary files, browser caches, npm / Yarn / pnpm / pip / uv / Cargo / NuGet / Gradle / Hugging Face caches, node_modules and the Recycle Bin.
+- The Apps page lists installed programs and Store apps, sorted by the actual size of their install folders. Select several and uninstall them in one go: apps with a registered quiet uninstall command, MSI, Inno Setup and NSIS installs, and Store apps are removed silently without their uninstall wizard; the rest open their own wizard.
 - Near-zero CPU while idle: the window repaints only when data or input changes.
 
 ## Install
