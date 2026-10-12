@@ -188,12 +188,6 @@ fn pill_width(ui: &Ui, label: &str) -> f32 {
         + 44.0
 }
 
-/// 一排按钮（间距 `gap`）的总宽度，用来决定放不放得下。
-pub fn buttons_width(ui: &Ui, labels: &[&str], gap: f32) -> f32 {
-    let w: f32 = labels.iter().map(|l| pill_width(ui, l)).sum();
-    w + gap * labels.len().saturating_sub(1) as f32
-}
-
 /// 图标 + 文字的按钮底板。
 fn pill(ui: &mut Ui, label: &str, enabled: bool) -> (Response, Rect) {
     let size = vec2(pill_width(ui, label), 32.0);
@@ -229,10 +223,39 @@ pub fn tool_button(ui: &mut Ui, glyph: Icon, label: &str, enabled: bool, danger:
     button_on(ui, glyph, label, enabled, danger, p.surface)
 }
 
-/// 放在卡片（surface 底色）上的按钮：底色用轨道色，才看得出是按钮。
-pub fn card_button(ui: &mut Ui, glyph: Icon, label: &str, enabled: bool, danger: bool) -> Response {
+/// 只有图标的小按钮，放在 `rect` 里；文字作为悬停提示。`danger` 用于删除这类破坏性操作。
+pub fn icon_button(
+    ui: &mut Ui,
+    rect: Rect,
+    id: egui::Id,
+    glyph: Icon,
+    tip: &str,
+    enabled: bool,
+    danger: bool,
+) -> Response {
     let p = Palette::of(ui.ctx());
-    button_on(ui, glyph, label, enabled, danger, p.track)
+    let sense = if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let resp = ui.interact(rect, id, sense);
+    if enabled && resp.hovered() {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(7), p.hover);
+    }
+    let color = match (enabled, danger) {
+        (false, _) => p.faint,
+        (true, true) => p.danger,
+        (true, false) => p.muted,
+    };
+    icon(ui, glyph, rect.center(), 15.0, color);
+    let resp = resp.on_hover_text(tip);
+    if enabled {
+        resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+    } else {
+        resp
+    }
 }
 
 fn button_on(

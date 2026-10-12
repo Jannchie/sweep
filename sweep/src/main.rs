@@ -247,6 +247,9 @@ impl App {
                 // 扫描期间改过大小口径设置的话，按新设置重新排序。
                 doc.set_basis(self.settings.basis == Basis::Allocated, ctx);
                 self.doc = Some(doc);
+                if std::env::var("SWEEP_SCAN").is_ok() {
+                    self.view = View::Cleanup;
+                } // TMPHOOK
             }
             Err(e) => self.scan_error = Some(e),
         }
@@ -918,6 +921,16 @@ impl eframe::App for App {
     }
 
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+        {
+            static STARTED: std::sync::atomic::AtomicBool =
+                std::sync::atomic::AtomicBool::new(false);
+            if let Ok(t) = std::env::var("SWEEP_SCAN")
+                && !STARTED.swap(true, std::sync::atomic::Ordering::Relaxed)
+            {
+                let ctx = ui.ctx().clone();
+                self.start_scan(&ctx, &t);
+            }
+        } // TMPHOOK
         // 自适应限帧：只有持续高帧率（1000Hz 游戏鼠标等）时才睡眠到一个刷新周期。
         // 平时不睡：在帧内睡眠会让 NVIDIA 驱动线程忙等，每帧额外多耗约 1.7ms。
         const BURST_WINDOW: Duration = Duration::from_millis(100);
