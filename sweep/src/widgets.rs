@@ -60,20 +60,21 @@ pub fn brand_mark(ui: &mut Ui, size: f32) -> Rect {
 pub fn meter(painter: &Painter, rect: Rect, frac: f32, color: Color32, track: Color32) {
     // 与图表同一套点阵语言：一排方点，边长等于条的高度，按比例从左往右点亮，
     // 最后一个点按余数调透明度，数值变化是连续的。
-    // 点的边长和每个点的起点都取整到物理像素：每个点一样大、四边都清晰，
-    // 不会因为落在半个像素上而一边发虚、看起来大小不一或没对齐；点距最多差 1 个像素，整排仍铺满。
+    // 点的边长、间隙都取整数个物理像素，点距处处相同：每个点一样大、边缘清晰、间距均匀。
+    // 用点的个数去适应宽度，多出的不到一个点距的余量留在行尾。
     let ppp = painter.pixels_per_point();
     let px = |v: f32| (v * ppp).round();
     let dot = px(rect.height()).max(1.0);
+    let gap = (dot * 0.5).round().max(1.0);
+    let pitch = dot + gap;
     let (left, top) = (px(rect.left()), px(rect.top()));
     let width = px(rect.right()) - left;
-    let n = (((width + dot * 0.5) / (dot * 1.5)).floor() as usize).max(2);
-    let pitch = (width - dot) / (n - 1) as f32;
+    let n = (((width + gap) / pitch).floor() as usize).max(2);
     let lit = frac.clamp(0.0, 1.0) * n as f32;
     let mut mesh = Mesh::default();
     for i in 0..n {
         let r = Rect::from_min_size(
-            pos2((left + i as f32 * pitch).round() / ppp, top / ppp),
+            pos2((left + i as f32 * pitch) / ppp, top / ppp),
             vec2(dot / ppp, dot / ppp),
         );
         mesh.add_colored_rect(r, track);
