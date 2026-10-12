@@ -356,36 +356,79 @@ impl Tree {
 
     /// 把 `i`（及其子树）从树上摘除，并从所有祖先的合计里减掉。返回被摘除的大小。
     pub fn remove(&mut self, i: u32) -> u64 {
-        let n = self.nodes[i as usize];
-        if n.parent == NONE || n.has(flags::DELETED) {
-            return 0;
-        }
-        self.unlink(i);
-        self.adjust_ancestors(n.parent, &n, false);
-        for k in self.bfs(i) {
-            self.nodes[k as usize].flags |= flags::DELETED;
-        }
-        n.size
+        self.remove_many(&[i])
     }
 
-    /// 从父节点的子链表里摘下（不改统计）。
-    fn unlink(&mut self, i: u32) {
-        let parent = self.nodes[i as usize].parent;
-        let next = self.nodes[i as usize].next_sibling;
-        let mut c = self.nodes[parent as usize].first_child;
-        if c == i {
-            self.nodes[parent as usize].first_child = next;
-        } else {
+    /// 一次摘除多个节点（及其子树）。同一目录下删掉十万个子项时，每个父目录的子链表只重建一次、
+    /// 每个受影响的祖先只重新排序一次，而不是逐个摘除时的平方级开销。
+    /// 已摘除的、根节点、以及祖先也在列表里的节点会被跳过（不会重复扣减）。返回摘除的大小合计。
+    pub fn remove_many(&mut self, ids: &[u32]) -> u64 {
+        let mut removed = 0;
+        // 子链表里有被摘除项的父目录，以及大小变了、需要重新排序的祖先。
+        let mut parents = Vec::new();
+        let mut resort = Vec::new();
+        for &i in ids {
+            let n = self.nodes[i as usize];
+            if n.parent == NONE || n.has(flags::DELETED) {
+                continue;
+            }
+            let files = n.files;
+            let dirs = n.dirs + u32::from(n.is_dir());
+            let mut a = n.parent;
+            while a != NONE {
+                let p = &mut self.nodes[a as usize];
+                p.size = p.size.saturating_sub(n.size);
+                p.alloc = p.alloc.saturating_sub(n.alloc);
+                p.files = p.files.saturating_sub(files);
+                p.dirs = p.dirs.saturating_sub(dirs);
+                resort.push(a);
+                a = p.parent;
+            }
+            for k in self.bfs(i) {
+                self.nodes[k as usize].flags |= flags::DELETED;
+            }
+            parents.push(n.parent);
+            removed += n.size;
+        }
+        parents.sort_unstable();
+        parents.dedup();
+        for &p in &parents {
+            if self.nodes[p as usize].has(flags::DELETED) {
+                continue;
+            }
+            // 重建子链表：去掉打了 DELETED 的子节点，顺序不变。
+            let mut prev = NONE;
+            let mut c = self.nodes[p as usize].first_child;
             while c != NONE {
-                let s = self.nodes[c as usize].next_sibling;
-                if s == i {
-                    self.nodes[c as usize].next_sibling = next;
-                    break;
+                let next = self.nodes[c as usize].next_sibling;
+                if self.nodes[c as usize].has(flags::DELETED) {
+                    self.nodes[c as usize].next_sibling = NONE;
+                } else {
+                    if prev == NONE {
+                        self.nodes[p as usize].first_child = c;
+                    } else {
+                        self.nodes[prev as usize].next_sibling = c;
+                    }
+                    prev = c;
                 }
-                c = s;
+                c = next;
+            }
+            if prev == NONE {
+                self.nodes[p as usize].first_child = NONE;
+            } else {
+                self.nodes[prev as usize].next_sibling = NONE;
             }
         }
-        self.nodes[i as usize].next_sibling = NONE;
+        // 大小变了，每一层的兄弟顺序都可能变；每个祖先只排一次。
+        resort.sort_unstable();
+        resort.dedup();
+        let mut buf = Vec::new();
+        for a in resort {
+            if !self.nodes[a as usize].has(flags::DELETED) {
+                self.sort_children(a, &mut buf);
+            }
+        }
+        removed
     }
 
     /// 把子树 `n` 的统计加到（或减出）从 `from` 开始的每个祖先上，并重新排序受影响的兄弟链。
@@ -693,6 +736,46 @@ mod tests {
         assert_eq!(t.node(root).dirs, 2);
         assert!(t.node(x).has(flags::DELETED) && t.node(y).has(flags::DELETED));
         assert!(t.search("x.txt", 10).is_empty());
+    }
+
+    #[test]
+    fn remove_many_skips_nested_and_repeats() {
+        let (mut t, [root, a, x, y, b, c, z, top]) = sample();
+        // a 和它里面的 x 都在列表里：只扣一次；根与重复项被跳过。
+        assert_eq!(t.remove_many(&[x, a, root, a, z]), 140);
+        assert_eq!(t.node(root).size, 5);
+        assert_eq!(t.node(root).files, 1);
+        assert_eq!(t.node(root).dirs, 2);
+        assert_eq!(t.node(b).size, 0);
+        assert!(t.node(y).has(flags::DELETED) && t.node(z).has(flags::DELETED));
+        assert!(!t.node(c).has(flags::DELETED));
+        assert_eq!(t.children(root).collect::<Vec<_>>(), vec![top, b]);
+        assert_eq!(t.children(c).count(), 0);
+    }
+
+    #[test]
+    fn remove_many_wide_folder() {
+        let mut t = Tree::new(r"C:\");
+        let d = t.push(t.root, "wide", dir());
+        let ids: Vec<u32> = (0..20_000u64)
+            .map(|k| t.push(d, &format!("f{k}"), file(k + 1)))
+            .collect();
+        t.finish();
+        let total = t.node(d).size;
+        // 删掉偶数大小的一半。
+        let gone: Vec<u32> = ids
+            .iter()
+            .copied()
+            .filter(|&i| t.node(i).size.is_multiple_of(2))
+            .collect();
+        let freed: u64 = gone.iter().map(|&i| t.node(i).size).sum();
+        assert_eq!(t.remove_many(&gone), freed);
+        assert_eq!(t.node(d).size, total - freed);
+        assert_eq!(t.node(t.root).files, 10_000);
+        let kids: Vec<u32> = t.children(d).collect();
+        assert_eq!(kids.len(), 10_000);
+        assert!(kids.windows(2).all(|w| t.value(w[0]) >= t.value(w[1])));
+        assert!(kids.iter().all(|&k| !t.node(k).size.is_multiple_of(2)));
     }
 
     #[test]
