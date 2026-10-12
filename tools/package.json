@@ -1,0 +1,11 @@
+{
+  "name": "sweep-tools",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "icons": "node gen-icons.mjs"
+  },
+  "devDependencies": {
+    "@jannchie/icons": "^0.10.0"
+  }
+}

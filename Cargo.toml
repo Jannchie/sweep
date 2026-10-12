@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["sweep-scan"]
+members = ["sweep", "sweep-scan"]
 
 [profile.release]
 lto = true
