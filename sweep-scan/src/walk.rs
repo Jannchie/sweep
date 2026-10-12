@@ -52,7 +52,13 @@ struct Raw {
 }
 
 /// 扫描 `root` 文件夹（如 `C:\` 或 `D:\data`）。
-pub fn scan(root: &str, progress: &Progress, cancel: &AtomicBool) -> Result<Tree, String> {
+/// `by_alloc` 决定汇总后按哪种大小排序（见 [`Tree::set_basis`]）。
+pub fn scan(
+    root: &str,
+    by_alloc: bool,
+    progress: &Progress,
+    cancel: &AtomicBool,
+) -> Result<Tree, String> {
     let meta = std::fs::metadata(root).map_err(|e| format!("无法访问 {root}：{e}"))?;
     if !meta.is_dir() {
         return Err(format!("{root} 不是文件夹"));
@@ -78,6 +84,7 @@ pub fn scan(root: &str, progress: &Progress, cancel: &AtomicBool) -> Result<Tree
     }
     progress.set_current("正在汇总…".into());
     let mut tree = ctx.tree.into_inner().unwrap();
+    tree.by_alloc = by_alloc;
     tree.finish();
     Ok(tree)
 }
@@ -324,7 +331,7 @@ mod tests {
             .is_ok_and(|o| o.status.success());
 
         let root = base.to_str().unwrap();
-        let t = scan(root, &Progress::default(), &AtomicBool::new(false)).unwrap();
+        let t = scan(root, false, &Progress::default(), &AtomicBool::new(false)).unwrap();
         std::fs::remove_dir_all(&base).unwrap();
 
         let r = t.node(t.root);

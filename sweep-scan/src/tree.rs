@@ -64,6 +64,8 @@ pub struct Tree {
     pub root: u32,
     /// 扩展名表（小写，不含点），下标 0 是空串。由 [`Tree::finish`] 生成。
     pub exts: Vec<String>,
+    /// 排序、查询按实际占用（true）还是逻辑大小（false）。见 [`Tree::set_basis`]。
+    pub by_alloc: bool,
 }
 
 /// 新建节点时的参数。
@@ -84,6 +86,7 @@ impl Tree {
             names: String::new(),
             root: 0,
             exts: vec![String::new()],
+            by_alloc: false,
         };
         t.push(
             NONE,
@@ -177,6 +180,26 @@ impl Tree {
 
     pub fn node(&self, i: u32) -> &Node {
         &self.nodes[i as usize]
+    }
+
+    /// 按当前口径（[`Tree::by_alloc`]）的大小。
+    pub fn value(&self, i: u32) -> u64 {
+        let n = &self.nodes[i as usize];
+        if self.by_alloc { n.alloc } else { n.size }
+    }
+
+    /// 切换大小口径并按新口径重新排序所有目录。几百万个节点约需一秒，应在后台线程调用。
+    pub fn set_basis(&mut self, by_alloc: bool) {
+        if self.by_alloc == by_alloc {
+            return;
+        }
+        self.by_alloc = by_alloc;
+        let mut buf = Vec::new();
+        for i in self.bfs(self.root) {
+            if self.nodes[i as usize].is_dir() {
+                self.sort_children(i, &mut buf);
+            }
+        }
     }
 
     pub fn ext_name(&self, i: u32) -> &str {
@@ -287,9 +310,8 @@ impl Tree {
         }
         // 大小相同时按名字排，结果稳定，重新扫描后顺序不会乱跳。
         buf.sort_unstable_by(|&a, &b| {
-            let (na, nb) = (&self.nodes[a as usize], &self.nodes[b as usize]);
-            nb.size
-                .cmp(&na.size)
+            self.value(b)
+                .cmp(&self.value(a))
                 .then_with(|| self.name(a).cmp(self.name(b)))
         });
         self.nodes[i as usize].first_child = buf[0];
@@ -450,6 +472,15 @@ impl Tree {
             let parent = map[sub.nodes[i as usize].parent as usize];
             self.link(parent, map[i as usize]);
         }
+        // sub 可能是按另一种口径排的序。
+        if sub.by_alloc != self.by_alloc {
+            let mut buf = Vec::new();
+            for i in self.bfs(target) {
+                if self.nodes[i as usize].is_dir() {
+                    self.sort_children(i, &mut buf);
+                }
+            }
+        }
         let r = sub.nodes[sub.root as usize];
         let t = &mut self.nodes[target as usize];
         t.size = r.size;
@@ -474,7 +505,7 @@ impl Tree {
             let node = &self.nodes[i as usize];
             if node.is_dir() {
                 // 子节点按大小降序，比堆里最小的还小的目录可以整个跳过。
-                if heap.len() == n && heap.peek().is_some_and(|m| node.size <= m.0.0) {
+                if heap.len() == n && heap.peek().is_some_and(|m| self.value(i) <= m.0.0) {
                     continue;
                 }
                 let mut c = node.first_child;
@@ -482,8 +513,8 @@ impl Tree {
                     stack.push(c);
                     c = self.nodes[c as usize].next_sibling;
                 }
-            } else if node.size > 0 {
-                heap.push(Reverse((node.size, i)));
+            } else if self.value(i) > 0 {
+                heap.push(Reverse((self.value(i), i)));
                 if heap.len() > n {
                     heap.pop();
                 }
@@ -508,7 +539,7 @@ impl Tree {
                 }
             } else {
                 let a = &mut acc[node.ext as usize];
-                a.0 += node.size;
+                a.0 += self.value(i);
                 a.1 += 1;
             }
         }
@@ -543,11 +574,7 @@ impl Tree {
                 }
             })
             .collect();
-        hits.sort_unstable_by(|&a, &b| {
-            self.nodes[b as usize]
-                .size
-                .cmp(&self.nodes[a as usize].size)
-        });
+        hits.sort_unstable_by_key(|&i| std::cmp::Reverse(self.value(i)));
         hits.truncate(limit);
         hits
     }
@@ -705,6 +732,35 @@ mod tests {
         assert_eq!(extension(".gitignore"), None);
         assert_eq!(extension("a.tar.gz"), Some("gz"));
         assert_eq!(extension("noext"), None);
+    }
+
+    #[test]
+    fn switches_basis() {
+        let mut t = Tree::new(r"C:\");
+        let a = t.push(
+            t.root,
+            "sparse.bin",
+            Entry {
+                size: 1000,
+                alloc: 0,
+                ..file(0)
+            },
+        );
+        let b = t.push(
+            t.root,
+            "real.bin",
+            Entry {
+                size: 10,
+                alloc: 4096,
+                ..file(0)
+            },
+        );
+        t.finish();
+        assert_eq!(t.children(t.root).next(), Some(a));
+        t.set_basis(true);
+        assert_eq!(t.children(t.root).next(), Some(b));
+        assert_eq!(t.value(t.root), 4096);
+        assert_eq!(t.largest_files(t.root, 1), vec![b]);
     }
 
     #[test]

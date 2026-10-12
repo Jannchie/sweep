@@ -14,7 +14,7 @@ fn gib(b: u64) -> String {
 
 fn run(target: &str, engine: Engine) -> Tree {
     let progress = Progress::default();
-    let out = sweep_scan::scan(target, engine, &progress, &AtomicBool::new(false))
+    let out = sweep_scan::scan(target, engine, false, &progress, &AtomicBool::new(false))
         .unwrap_or_else(|e| panic!("扫描失败：{e}"));
     let t = out.tree;
     let live = t.nodes.iter().filter(|n| !n.has(flags::DELETED)).count();
@@ -99,16 +99,20 @@ fn compare_dir(dir: &str) {
         println!("MFT 里找不到 {dir}");
         return;
     };
-    let collect = |t: &Tree, root: u32| -> std::collections::BTreeMap<String, (u64, u64, u32, u8)> {
-        t.bfs(root)
-            .into_iter()
-            .map(|i| {
-                let n = t.node(i);
-                let keep = flags::DIR | flags::HARDLINK | flags::REPARSE;
-                (t.path(i).to_lowercase(), (n.size, n.alloc, n.files, n.flags & keep))
-            })
-            .collect()
-    };
+    let collect =
+        |t: &Tree, root: u32| -> std::collections::BTreeMap<String, (u64, u64, u32, u8)> {
+            t.bfs(root)
+                .into_iter()
+                .map(|i| {
+                    let n = t.node(i);
+                    let keep = flags::DIR | flags::HARDLINK | flags::REPARSE;
+                    (
+                        t.path(i).to_lowercase(),
+                        (n.size, n.alloc, n.files, n.flags & keep),
+                    )
+                })
+                .collect()
+        };
     let (a, b) = (collect(&m, mroot), collect(&w, w.root));
     let mut bad = 0;
     for (path, x) in &a {

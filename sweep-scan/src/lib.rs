@@ -93,10 +93,11 @@ pub fn is_volume_root(target: &str) -> bool {
     b.len() == 3 && b[0].is_ascii_alphabetic() && &b[1..] == b":\\"
 }
 
-/// 同步扫描（在调用线程上执行）。
+/// 同步扫描（在调用线程上执行）。`by_alloc` 见 [`Tree::set_basis`]。
 pub fn scan(
     target: &str,
     engine: Engine,
+    by_alloc: bool,
     progress: &Progress,
     cancel: &AtomicBool,
 ) -> Result<Outcome, String> {
@@ -110,7 +111,7 @@ pub fn scan(
         return Err("读取 MFT 需要以管理员身份运行，且目标是 NTFS 卷的根目录".into());
     }
     if engine != Engine::Walk && mft_possible {
-        match mft::scan(&target, progress, cancel) {
+        match mft::scan(&target, by_alloc, progress, cancel) {
             Ok(tree) => {
                 return Ok(Outcome {
                     tree,
@@ -130,7 +131,7 @@ pub fn scan(
     if system::is_elevated() {
         system::enable_backup_privilege();
     }
-    let tree = walk::scan(&target, progress, cancel)?;
+    let tree = walk::scan(&target, by_alloc, progress, cancel)?;
     Ok(Outcome {
         tree,
         engine: Engine::Walk,
@@ -157,7 +158,12 @@ pub struct Scan {
 
 impl Scan {
     /// 在新线程上开始扫描；完成（或失败、取消）时调用 `notify`，UI 用它请求重绘。
-    pub fn start(target: &str, engine: Engine, notify: impl FnOnce() + Send + 'static) -> Self {
+    pub fn start(
+        target: &str,
+        engine: Engine,
+        by_alloc: bool,
+        notify: impl FnOnce() + Send + 'static,
+    ) -> Self {
         let target = normalize(target);
         let progress = Arc::new(Progress::default());
         let cancel = Arc::new(AtomicBool::new(false));
@@ -166,7 +172,7 @@ impl Scan {
         std::thread::Builder::new()
             .name("scan".into())
             .spawn(move || {
-                let _ = tx.send(scan(&t, engine, &p, &c));
+                let _ = tx.send(scan(&t, engine, by_alloc, &p, &c));
                 notify();
             })
             .expect("spawn scan");

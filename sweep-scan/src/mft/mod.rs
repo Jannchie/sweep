@@ -296,7 +296,12 @@ struct Item {
 }
 
 /// 扫描整个 NTFS 卷。`root` 如 `C:\`。
-pub fn scan(root: &str, progress: &Progress, cancel: &AtomicBool) -> Result<Tree, String> {
+pub fn scan(
+    root: &str,
+    by_alloc: bool,
+    progress: &Progress,
+    cancel: &AtomicBool,
+) -> Result<Tree, String> {
     let letter = root
         .chars()
         .next()
@@ -368,7 +373,7 @@ pub fn scan(root: &str, progress: &Progress, cancel: &AtomicBool) -> Result<Tree
         }
         drop(item_tx);
         drop(free_tx);
-        let tree = build(root, records, item_rx, progress, cancel);
+        let tree = build(root, records, by_alloc, item_rx, progress, cancel);
         for r in readers {
             r.join().map_err(|_| "读线程异常退出".to_string())??;
         }
@@ -545,6 +550,7 @@ const UNNAMED: u64 = u64::MAX;
 fn build(
     root: &str,
     records: u64,
+    by_alloc: bool,
     items: Receiver<Vec<Item>>,
     progress: &Progress,
     cancel: &AtomicBool,
@@ -718,6 +724,7 @@ fn build(
     drop(pending);
     drop(by_record);
     let _ = orphans;
+    tree.by_alloc = by_alloc;
     tree.finish();
     tree
 }
@@ -1024,6 +1031,7 @@ mod tests {
         let t = build(
             r"X:\",
             records,
+            false,
             rx,
             &Progress::default(),
             &AtomicBool::new(false),
