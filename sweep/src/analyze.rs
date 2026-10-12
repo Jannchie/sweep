@@ -785,14 +785,17 @@ fn treemap_view(ui: &mut Ui, doc: &mut Doc, tm: &mut Treemap, actions: &mut Vec<
     let resp = ui.allocate_rect(rect, Sense::click());
     ui.painter().rect_filled(rect, CornerRadius::ZERO, p.bg);
 
+    let dark = ctx.theme() == egui::Theme::Dark;
+    let unit = ppp.round().max(1.0) as u8;
+    let key = treemap::Key {
+        version: doc.version,
+        root: doc.zoom,
+        size,
+        dark,
+        highlight: doc.highlight_ext,
+        unit,
+    };
     if let Some(d) = &doc.derived {
-        let key = treemap::Key {
-            version: doc.version,
-            root: doc.zoom,
-            size,
-            dark: ctx.theme() == egui::Theme::Dark,
-            highlight: doc.highlight_ext,
-        };
         tm.request(key, || treemap::Request {
             key,
             tree: doc.tree.clone(),
@@ -819,8 +822,8 @@ fn treemap_view(ui: &mut Ui, doc: &mut Doc, tm: &mut Treemap, actions: &mut Vec<
             Color32::WHITE,
         );
     }
-    let stale =
-        layout.key.size != size || layout.key.root != doc.zoom || layout.key.version != doc.version;
+    // 布局还没跟上（尺寸、数据、主题变了）时贴图是拉伸的旧图，覆盖层对不上，先不画。
+    let stale = layout.key != key;
     let to_screen = |r: [f32; 4]| {
         let sx = rect.width() / layout.key.size[0].max(1) as f32;
         let sy = rect.height() / layout.key.size[1].max(1) as f32;
@@ -829,6 +832,36 @@ fn treemap_view(ui: &mut Ui, doc: &mut Doc, tm: &mut Treemap, actions: &mut Vec<
             pos2(rect.left() + r[2] * sx, rect.top() + r[3] * sy),
         )
     };
+    // 块的圆角（物理像素）换成界面坐标。
+    let corner = |tile: &treemap::Tile| {
+        CornerRadius::same((tile.radius(unit) / ppp).round().clamp(0.0, 255.0) as u8)
+    };
+    let t = doc.tree.clone();
+    // 文件夹标题栏：名字 + 大小，放不下时以省略号截断。只有够大的文件夹才有，数量很少。
+    if !stale {
+        let painter = ui.painter().with_clip_rect(rect);
+        for &(i, hr) in &layout.headers {
+            let n = layout.tiles[i].node;
+            let hr = to_screen(hr);
+            let inset = 6.0;
+            let mut job = egui::text::LayoutJob::default();
+            job.append(
+                crate::short_name(&t, n),
+                0.0,
+                egui::TextFormat::simple(FontId::new(11.5, semibold()), p.text),
+            );
+            job.append(
+                &fmt_bytes(t.value(n)),
+                6.0,
+                egui::TextFormat::simple(FontId::proportional(11.0), p.muted),
+            );
+            job.wrap =
+                egui::text::TextWrapping::truncate_at_width((hr.width() - inset * 2.0).max(0.0));
+            let g = painter.layout_job(job);
+            let y = ((hr.center().y - g.size().y / 2.0) * ppp).round() / ppp;
+            painter.galley(pos2(hr.left() + inset, y), g, p.text);
+        }
+    }
     // 每个选中项的外框。选中了哪些块只在布局或选中项变化时重新找一遍（块的数量与像素有关，
     // 与节点数无关，按位图判断）；上级文件夹也被选中时只画上级的框，太小的块不画。
     let sel = &doc.selection;
@@ -845,8 +878,8 @@ fn treemap_view(ui: &mut Ui, doc: &mut Doc, tm: &mut Treemap, actions: &mut Vec<
                     let [x0, y0, x1, y1] = tile.rect;
                     tile.kind != TileKind::Rest
                         && n != doc.zoom
-                        && x1 - x0 >= 3.0
-                        && y1 - y0 >= 3.0
+                        && x1 - x0 >= 4.0
+                        && y1 - y0 >= 4.0
                         && sel.contains(n)
                         && !sel.contains(t.node(n).parent)
                 })
@@ -855,12 +888,17 @@ fn treemap_view(ui: &mut Ui, doc: &mut Doc, tm: &mut Treemap, actions: &mut Vec<
             tm.selected_tiles = Some((cache_key, hits));
         }
         if let Some((_, hits)) = &tm.selected_tiles {
+            // 细的 accent 色框，内侧再描一圈底色细线，橙色块上也看得清。
             let painter = ui.painter();
             for &i in hits {
+                let tile = &layout.tiles[i];
+                let r = to_screen(tile.rect);
+                let cr = corner(tile);
+                painter.rect_stroke(r, cr, Stroke::new(2.0, p.accent), egui::StrokeKind::Inside);
                 painter.rect_stroke(
-                    to_screen(layout.tiles[i].rect).shrink(1.0),
-                    CornerRadius::ZERO,
-                    Stroke::new(2.0, p.text),
+                    r.shrink(2.0),
+                    cr,
+                    Stroke::new(1.0, p.bg.gamma_multiply(0.85)),
                     egui::StrokeKind::Inside,
                 );
             }
@@ -871,15 +909,28 @@ fn treemap_view(ui: &mut Ui, doc: &mut Doc, tm: &mut Treemap, actions: &mut Vec<
         let y = (pos.y - rect.top()) * ppp;
         layout.hit(x, y).copied()
     });
-    let t = doc.tree.clone();
     if let Some(tile) = hovered {
+        // 悬停：色块提亮一点；文件夹（悬停在它的标题栏或缝隙上）描一圈淡边。
         let r = to_screen(tile.rect);
-        ui.painter().rect_stroke(
-            r,
-            CornerRadius::ZERO,
-            Stroke::new(1.0, Color32::WHITE.gamma_multiply(0.9)),
-            egui::StrokeKind::Inside,
-        );
+        match tile.kind {
+            TileKind::Dir if tile.node != doc.zoom => {
+                ui.painter().rect_stroke(
+                    r,
+                    corner(&tile),
+                    Stroke::new(1.0, p.text.gamma_multiply(0.35)),
+                    egui::StrokeKind::Inside,
+                );
+            }
+            TileKind::Dir => {}
+            _ => {
+                let lift = if dark {
+                    Color32::from_white_alpha(34)
+                } else {
+                    Color32::from_white_alpha(80)
+                };
+                ui.painter().rect_filled(r, corner(&tile), lift);
+            }
+        }
         let total = t.value(doc.zoom);
         let resp = resp.on_hover_ui_at_pointer(|ui| {
             let n = tile.node;
