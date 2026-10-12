@@ -28,34 +28,36 @@ pub struct Palette {
     pub chip_alpha: f32,
 }
 
+/// 配色对齐 Windows 11（资源管理器、任务管理器）：暗色背景 #202020、卡片 #2B2B2B，
+/// 浅色背景 #F3F3F3、卡片 #FBFBFB，都是不带色偏的中性灰；次要文字对比度不低于 7:1。
 const DARK: Palette = Palette {
-    bg: Color32::from_rgb(0x0f, 0x0f, 0x11),
-    surface: Color32::from_rgb(0x18, 0x18, 0x1b),
-    hover: Color32::from_rgb(0x1f, 0x1f, 0x23),
-    track: Color32::from_rgb(0x26, 0x26, 0x2b),
-    border: Color32::from_rgb(0x27, 0x27, 0x2c),
-    text: Color32::from_rgb(0xf2, 0xf2, 0xf4),  // ≥ 14.5:1
-    muted: Color32::from_rgb(0xc4, 0xc4, 0xcc), // ≥ 9.3:1
-    faint: Color32::from_rgb(0xab, 0xab, 0xb5), // ≥ 7.1:1
+    bg: Color32::from_rgb(0x20, 0x20, 0x20),
+    surface: Color32::from_rgb(0x2b, 0x2b, 0x2b),
+    hover: Color32::from_rgb(0x33, 0x33, 0x33),
+    track: Color32::from_rgb(0x3a, 0x3a, 0x3a),
+    border: Color32::from_rgb(0x38, 0x38, 0x38),
+    text: Color32::from_rgb(0xff, 0xff, 0xff),  // ≥ 12.6:1
+    muted: Color32::from_rgb(0xd6, 0xd6, 0xd6), // ≥ 8.6:1
+    faint: Color32::from_rgb(0xc2, 0xc2, 0xc2), // ≥ 7.0:1
     accent: Color32::from_rgb(0xff, 0x8a, 0x3d),
     chip: Color32::from_rgb(0xff, 0xcb, 0xa6),   // ≥ 10:1
-    danger: Color32::from_rgb(0xff, 0xa3, 0xa3), // ≥ 8.6:1（只出现在按钮上）
+    danger: Color32::from_rgb(0xff, 0xb4, 0xb4), // ≥ 7.4:1（只出现在按钮上）
     selection_alpha: 0.14,
     chip_alpha: 0.12,
 };
 
 const LIGHT: Palette = Palette {
-    bg: Color32::from_rgb(0xf7, 0xf7, 0xf8),
-    surface: Color32::from_rgb(0xff, 0xff, 0xff),
-    hover: Color32::from_rgb(0xef, 0xef, 0xf2),
-    track: Color32::from_rgb(0xe9, 0xe9, 0xee),
-    border: Color32::from_rgb(0xe5, 0xe5, 0xea),
-    text: Color32::from_rgb(0x11, 0x11, 0x13),  // ≥ 15.6:1
-    muted: Color32::from_rgb(0x3f, 0x3f, 0x47), // ≥ 8.6:1
-    faint: Color32::from_rgb(0x4b, 0x4b, 0x53), // ≥ 7.1:1
+    bg: Color32::from_rgb(0xf3, 0xf3, 0xf3),
+    surface: Color32::from_rgb(0xfb, 0xfb, 0xfb),
+    hover: Color32::from_rgb(0xe9, 0xe9, 0xe9),
+    track: Color32::from_rgb(0xe3, 0xe3, 0xe3),
+    border: Color32::from_rgb(0xe5, 0xe5, 0xe5),
+    text: Color32::from_rgb(0x1b, 0x1b, 0x1b),  // ≥ 14.1:1
+    muted: Color32::from_rgb(0x3d, 0x3d, 0x3d), // ≥ 8.9:1
+    faint: Color32::from_rgb(0x4a, 0x4a, 0x4a), // ≥ 7.3:1
     accent: Color32::from_rgb(0xea, 0x58, 0x0c),
     chip: Color32::from_rgb(0x7c, 0x2d, 0x12),   // ≥ 8.4:1
-    danger: Color32::from_rgb(0x9b, 0x1c, 0x1c), // ≥ 7.1:1（只出现在按钮上）
+    danger: Color32::from_rgb(0x8a, 0x18, 0x18), // ≥ 7.7:1（只出现在按钮上）
     selection_alpha: 0.09,
     chip_alpha: 0.09,
 };
