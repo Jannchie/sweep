@@ -7,9 +7,11 @@ use eframe::egui::{
     Sense, Shadow, Stroke, Ui, pos2, vec2,
 };
 
+use sweep_scan::{t, tf};
+
 use crate::icons_gen::Icon;
 use crate::theme::{Palette, semibold, types};
-use crate::{fmt_bytes, fmt_count, widgets};
+use crate::{fmt_bytes, fmt_count, n_items, widgets};
 
 /// 白字在其上 ≥ 7:1（AAA）。
 const DANGER_FILL: Color32 = Color32::from_rgb(0x99, 0x1b, 0x1b);
@@ -29,7 +31,7 @@ pub struct DeleteRequest {
     pub items: Vec<(String, u64, bool, u64)>,
     /// 永久删除（不进回收站）。
     pub permanent: bool,
-    /// 对话框标题里的对象，例如 "node_modules"、"3 项"。
+    /// 对话框标题里的对象，例如 "node_modules"、"3 items"。
     pub label: String,
 }
 
@@ -49,24 +51,41 @@ pub fn confirm_delete(ctx: &egui::Context, req: &DeleteRequest) -> Option<Decisi
     modal(ctx, ("delete", req.permanent), 460.0, |ui| {
         let mut decision = None;
         ui.spacing_mut().item_spacing.y = 6.0;
+        let label = &req.label;
         if req.permanent {
-            danger_title(ui, &format!("永久删除 {}？", req.label));
+            danger_title(
+                ui,
+                &tf!(
+                    "永久删除 {label}？",
+                    "Permanently delete {label}?",
+                    "{label}を完全に削除しますか?"
+                ),
+            );
         } else {
             title(
                 ui,
                 Icon::Trash,
                 p.accent,
-                &format!("将 {} 移到回收站？", req.label),
+                &tf!(
+                    "将 {label} 移到回收站？",
+                    "Move {label} to the Recycle Bin?",
+                    "{label}をごみ箱に移動しますか?"
+                ),
             );
         }
         ui.add_space(6.0);
         let n = req.items.len();
+        let (items, size, files) = (
+            n_items(n as u64),
+            fmt_bytes(req.total()),
+            fmt_count(req.files()),
+        );
+        let s = if req.files() == 1 { "" } else { "s" };
         ui.label(
-            RichText::new(format!(
-                "共 {} 项，{}，包含 {} 个文件：",
-                n,
-                fmt_bytes(req.total()),
-                fmt_count(req.files())
+            RichText::new(tf!(
+                "共 {items}，{size}，包含 {files} 个文件：",
+                "{items}, {size}, containing {files} file{s}:",
+                "{items}、{size}、ファイル {files} 個:"
             ))
             .color(p.muted),
         );
@@ -113,20 +132,32 @@ pub fn confirm_delete(ctx: &egui::Context, req: &DeleteRequest) -> Option<Decisi
                 }
                 if n > SHOWN {
                     ui.label(
-                        RichText::new(format!("以及另外 {} 项", n - SHOWN))
-                            .size(12.0)
-                            .color(p.faint),
+                        RichText::new({
+                            let more = n - SHOWN;
+                            tf!("以及另外 {more} 项", "and {more} more", "ほか {more} 個")
+                        })
+                        .size(12.0)
+                        .color(p.faint),
                     );
                 }
             });
         ui.add_space(2.0);
         if req.permanent {
-            warning(ui, "永久删除不经过回收站，无法恢复。");
+            warning(
+                ui,
+                t!(
+                    "永久删除不经过回收站，无法恢复。",
+                    "Permanently deleted items skip the Recycle Bin and can't be restored.",
+                    "完全に削除した項目はごみ箱を経由せず、復元できません。"
+                ),
+            );
         } else {
             ui.label(
-                RichText::new(
+                RichText::new(t!(
                     "可以从回收站恢复。放进回收站的文件仍占用磁盘，清空回收站后才会腾出空间。",
-                )
+                    "You can restore them from the Recycle Bin. They still take up disk space until you empty it.",
+                    "ごみ箱から復元できます。ごみ箱を空にするまでディスク領域は解放されません。"
+                ))
                 .size(12.5)
                 .color(p.muted),
             );
@@ -135,9 +166,15 @@ pub fn confirm_delete(ctx: &egui::Context, req: &DeleteRequest) -> Option<Decisi
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
             let (label, kind) = if req.permanent {
-                ("永久删除", Kind::Danger)
+                (
+                    t!("永久删除", "Delete permanently", "完全に削除"),
+                    Kind::Danger,
+                )
             } else {
-                ("移到回收站", Kind::Primary)
+                (
+                    t!("移到回收站", "Move to Recycle Bin", "ごみ箱に移動"),
+                    Kind::Primary,
+                )
             };
             // 永久删除不响应 Enter，必须明确点按钮。
             if button(ui, label, kind, true).clicked()
@@ -145,13 +182,24 @@ pub fn confirm_delete(ctx: &egui::Context, req: &DeleteRequest) -> Option<Decisi
             {
                 decision = Some(Decision::Confirm);
             }
-            if button(ui, "取消", Kind::Secondary, true).clicked() {
+            if button(
+                ui,
+                t!("取消", "Cancel", "キャンセル"),
+                Kind::Secondary,
+                true,
+            )
+            .clicked()
+            {
                 decision = Some(Decision::Cancel);
             }
             let hint = if req.permanent {
-                "Esc 取消"
+                t!("Esc 取消", "Esc to cancel", "Esc でキャンセル")
             } else {
-                "Enter 确认 · Esc 取消"
+                t!(
+                    "Enter 确认 · Esc 取消",
+                    "Enter to confirm · Esc to cancel",
+                    "Enter で確定 · Esc でキャンセル"
+                )
             };
             ui.label(RichText::new(hint).size(11.5).color(p.faint));
         });
@@ -215,6 +263,8 @@ pub enum ToastKind {
 
 pub struct Toast {
     pub kind: ToastKind,
+    /// 进行中的通知的标记，操作完成时按它收走；普通通知为空。
+    pub tag: &'static str,
     pub title: String,
     pub detail: Option<String>,
     pub at: Instant,
@@ -227,6 +277,7 @@ impl Toast {
     pub fn ok(title: String, detail: Option<String>) -> Self {
         Self {
             kind: ToastKind::Success,
+            tag: "",
             title,
             detail,
             at: Instant::now(),
@@ -236,10 +287,15 @@ impl Toast {
     pub fn err(title: String, detail: Option<String>) -> Self {
         Self {
             kind: ToastKind::Error,
+            tag: "",
             title,
             detail,
             at: Instant::now(),
         }
+    }
+
+    pub fn tag(self, tag: &'static str) -> Self {
+        Self { tag, ..self }
     }
 
     fn ttl(&self) -> Duration {
@@ -299,7 +355,7 @@ pub fn toasts(ctx: &egui::Context, toasts: &mut Vec<Toast>) {
             .response;
         if resp
             .interact(Sense::click())
-            .on_hover_text("点击关闭")
+            .on_hover_text(t!("点击关闭", "Click to dismiss", "クリックして閉じる"))
             .clicked()
         {
             dismissed = Some(i);
@@ -398,7 +454,14 @@ pub fn confirm(
             if button(ui, button_label, Kind::Danger, true).clicked() {
                 decision = Some(Decision::Confirm);
             }
-            if button(ui, "取消", Kind::Secondary, true).clicked() {
+            if button(
+                ui,
+                t!("取消", "Cancel", "キャンセル"),
+                Kind::Secondary,
+                true,
+            )
+            .clicked()
+            {
                 decision = Some(Decision::Cancel);
             }
         });

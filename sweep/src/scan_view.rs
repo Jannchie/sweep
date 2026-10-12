@@ -5,8 +5,8 @@ use std::sync::atomic::Ordering;
 use eframe::egui::{
     self, Align, Align2, CornerRadius, FontId, Layout, Rect, RichText, Sense, Ui, pos2, vec2,
 };
-use sweep_scan::Scan;
 use sweep_scan::system::Volume;
+use sweep_scan::{Scan, t, tf};
 
 use crate::icons_gen::Icon;
 use crate::theme::{Palette, semibold};
@@ -39,22 +39,45 @@ pub fn show(ui: &mut Ui, scan: &Scan, volumes: &[Volume]) -> Vec<Action> {
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         ui.label(
-            RichText::new(format!("正在扫描 {}", scan.target))
-                .size(22.0)
-                .family(semibold())
-                .color(p.text),
+            RichText::new({
+                let target = &scan.target;
+                tf!(
+                    "正在扫描 {target}",
+                    "Scanning {target}",
+                    "{target} をスキャン中"
+                )
+            })
+            .size(22.0)
+            .family(semibold())
+            .color(p.text),
         );
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if widgets::tool_button(ui, Icon::Stop, "取消", true, false).clicked() {
+            if widgets::tool_button(
+                ui,
+                Icon::Stop,
+                t!("取消", "Cancel", "キャンセル"),
+                true,
+                false,
+            )
+            .clicked()
+            {
                 actions.push(Action::Cancel);
             }
         });
     });
     ui.label(
         RichText::new(if mft {
-            "正在读取 NTFS 主文件表（MFT）"
+            t!(
+                "正在读取 NTFS 主文件表（MFT）",
+                "Reading the NTFS master file table (MFT)",
+                "NTFS マスター ファイル テーブル (MFT) を読み取っています"
+            )
         } else {
-            "正在逐个目录遍历"
+            t!(
+                "正在逐个目录遍历",
+                "Walking folders one by one",
+                "フォルダーを順に走査しています"
+            )
         })
         .size(13.0)
         .color(p.muted),
@@ -70,9 +93,9 @@ pub fn show(ui: &mut Ui, scan: &Scan, volumes: &[Volume]) -> Vec<Action> {
             w,
             84.0,
             Icon::Files,
-            "文件",
+            t!("文件", "Files", "ファイル"),
             &fmt_count(files),
-            "已发现",
+            t!("已发现", "found", "検出済み"),
             p.accent,
         );
         widgets::kpi(
@@ -80,9 +103,9 @@ pub fn show(ui: &mut Ui, scan: &Scan, volumes: &[Volume]) -> Vec<Action> {
             w,
             84.0,
             Icon::Folder,
-            "文件夹",
+            t!("文件夹", "Folders", "フォルダー"),
             &fmt_count(dirs),
-            "已发现",
+            t!("已发现", "found", "検出済み"),
             p.accent,
         );
         widgets::kpi(
@@ -90,9 +113,9 @@ pub fn show(ui: &mut Ui, scan: &Scan, volumes: &[Volume]) -> Vec<Action> {
             w,
             84.0,
             Icon::HardDrive,
-            "大小",
+            t!("大小", "Size", "サイズ"),
             &fmt_bytes(bytes),
-            "文件大小合计",
+            t!("文件大小合计", "total file size", "ファイル サイズの合計"),
             p.accent,
         );
         widgets::kpi(
@@ -100,11 +123,14 @@ pub fn show(ui: &mut Ui, scan: &Scan, volumes: &[Volume]) -> Vec<Action> {
             w,
             84.0,
             Icon::Clock,
-            "用时",
+            t!("用时", "Elapsed", "経過時間"),
             &fmt_duration(scan.started.elapsed()),
             &match frac {
-                Some(f) => format!("约 {:.0}%", f * 100.0),
-                None => "进行中".into(),
+                Some(f) => {
+                    let pct = f * 100.0;
+                    tf!("约 {pct:.0}%", "about {pct:.0}%", "約 {pct:.0}%")
+                }
+                None => t!("进行中", "in progress", "実行中").into(),
             },
             p.accent,
         );
@@ -127,7 +153,7 @@ pub fn show(ui: &mut Ui, scan: &Scan, volumes: &[Volume]) -> Vec<Action> {
         top.sort_by_key(|t| std::cmp::Reverse(t.1));
         let max = top.first().map_or(1, |t| t.1).max(1);
         ui.label(
-            RichText::new("根目录下")
+            RichText::new(t!("根目录下", "Top-level folders", "ルート直下"))
                 .size(13.0)
                 .family(semibold())
                 .color(p.muted),
@@ -137,7 +163,11 @@ pub fn show(ui: &mut Ui, scan: &Scan, volumes: &[Volume]) -> Vec<Action> {
         for (name, size) in top.iter().take(rows.min(14)) {
             let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::hover());
             let name = if name.is_empty() {
-                "（根目录里的文件）"
+                t!(
+                    "（根目录里的文件）",
+                    "(files in the root)",
+                    "(ルートにあるファイル)"
+                )
             } else {
                 name
             };
@@ -182,9 +212,13 @@ pub fn empty(ui: &mut Ui, error: Option<&str>) -> Vec<Action> {
         c + vec2(0.0, 6.0),
         Align2::CENTER_CENTER,
         if error.is_some() {
-            "扫描失败"
+            t!("扫描失败", "Scan failed", "スキャンに失敗しました")
         } else {
-            "还没有扫描结果"
+            t!(
+                "还没有扫描结果",
+                "No scan results yet",
+                "スキャン結果はまだありません"
+            )
         },
         FontId::new(16.0, semibold()),
         p.text,
@@ -192,11 +226,24 @@ pub fn empty(ui: &mut Ui, error: Option<&str>) -> Vec<Action> {
     ui.painter().text(
         c + vec2(0.0, 30.0),
         Align2::CENTER_CENTER,
-        error.unwrap_or("在“磁盘”页选择一个磁盘或文件夹开始分析。"),
+        error.unwrap_or(t!(
+            "在“磁盘”页选择一个磁盘或文件夹开始分析。",
+            "Pick a drive or folder on the Drives page to start.",
+            "[ドライブ] ページでドライブかフォルダーを選んで分析を始めます。"
+        )),
         FontId::proportional(13.0),
         if error.is_some() { p.danger } else { p.muted },
     );
-    let b = Rect::from_center_size(c + vec2(0.0, 70.0), vec2(140.0, 32.0));
+    let label = ui.painter().layout_no_wrap(
+        t!("扫描文件夹…", "Scan a folder…", "フォルダーをスキャン…").into(),
+        FontId::proportional(12.5),
+        p.text,
+    );
+    // 宽度随文字：图标 22 + 文字 + 右侧留白 22。
+    let b = Rect::from_center_size(
+        c + vec2(0.0, 70.0),
+        vec2((label.size().x + 58.0).max(140.0), 32.0),
+    );
     let resp = ui.interact(b, egui::Id::new("empty-pick"), Sense::click());
     ui.painter().rect_filled(
         b,
@@ -210,13 +257,8 @@ pub fn empty(ui: &mut Ui, error: Option<&str>) -> Vec<Action> {
         15.0,
         p.muted,
     );
-    ui.painter().text(
-        pos2(b.left() + 36.0, b.center().y),
-        Align2::LEFT_CENTER,
-        "扫描文件夹…",
-        FontId::proportional(12.5),
-        p.text,
-    );
+    let y = b.center().y - label.size().y / 2.0;
+    ui.painter().galley(pos2(b.left() + 36.0, y), label, p.text);
     if resp.clicked() {
         actions.push(Action::PickFolder);
     }

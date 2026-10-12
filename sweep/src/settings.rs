@@ -2,6 +2,9 @@
 
 use std::path::PathBuf;
 
+use sweep_scan::i18n::{self, Lang};
+use sweep_scan::t;
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ThemeChoice {
     System,
@@ -14,9 +17,9 @@ impl ThemeChoice {
 
     pub fn label(self) -> &'static str {
         match self {
-            ThemeChoice::System => "跟随系统",
-            ThemeChoice::Light => "浅色",
-            ThemeChoice::Dark => "深色",
+            ThemeChoice::System => t!("跟随系统", "System", "システム"),
+            ThemeChoice::Light => t!("浅色", "Light", "ライト"),
+            ThemeChoice::Dark => t!("深色", "Dark", "ダーク"),
         }
     }
 
@@ -51,8 +54,8 @@ impl Basis {
 
     pub fn label(self) -> &'static str {
         match self {
-            Basis::Allocated => "占用空间",
-            Basis::Logical => "文件大小",
+            Basis::Allocated => t!("占用空间", "Size on disk", "ディスク上のサイズ"),
+            Basis::Logical => t!("文件大小", "Size", "サイズ"),
         }
     }
 
@@ -77,8 +80,12 @@ impl EngineChoice {
 
     pub fn label(self) -> &'static str {
         match self {
-            EngineChoice::Auto => "自动（优先读取 MFT）",
-            EngineChoice::Walk => "总是遍历目录",
+            EngineChoice::Auto => t!(
+                "自动（优先读取 MFT）",
+                "Automatic (MFT first)",
+                "自動 (MFT 優先)"
+            ),
+            EngineChoice::Walk => t!("总是遍历目录", "Always walk folders", "常にフォルダー走査"),
         }
     }
 
@@ -97,8 +104,51 @@ impl EngineChoice {
     }
 }
 
+/// 界面语言。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Language {
+    /// 跟随 Windows 显示语言。
+    System,
+    Zh,
+    En,
+    Ja,
+}
+
+impl Language {
+    pub const ALL: [Language; 4] = [Language::System, Language::Zh, Language::En, Language::Ja];
+
+    /// 语言名用各自的语言写，只有"跟随系统"随当前语言变。
+    pub fn label(self) -> &'static str {
+        match self {
+            Language::System => t!("跟随系统", "System", "システム"),
+            Language::Zh => "中文",
+            Language::En => "English",
+            Language::Ja => "日本語",
+        }
+    }
+
+    pub fn resolve(self) -> Lang {
+        match self {
+            Language::System => i18n::system_lang(),
+            Language::Zh => Lang::Zh,
+            Language::En => Lang::En,
+            Language::Ja => Lang::Ja,
+        }
+    }
+
+    fn key(self) -> &'static str {
+        match self {
+            Language::System => "system",
+            Language::Zh => "zh",
+            Language::En => "en",
+            Language::Ja => "ja",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
+    pub language: Language,
     pub theme: ThemeChoice,
     pub basis: Basis,
     pub engine: EngineChoice,
@@ -107,6 +157,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            language: Language::System,
             theme: ThemeChoice::System,
             basis: Basis::Allocated,
             engine: EngineChoice::Auto,
@@ -145,6 +196,7 @@ impl Settings {
             };
             let v = v.trim();
             match k.trim() {
+                "language" => s.language = pick(&Language::ALL, Language::key, v, s.language),
                 "theme" => s.theme = pick(&ThemeChoice::ALL, ThemeChoice::key, v, s.theme),
                 "basis" => s.basis = pick(&Basis::ALL, Basis::key, v, s.basis),
                 "engine" => s.engine = pick(&EngineChoice::ALL, EngineChoice::key, v, s.engine),
@@ -156,7 +208,8 @@ impl Settings {
 
     fn serialize(&self) -> String {
         format!(
-            "theme={}\nbasis={}\nengine={}\n",
+            "language={}\ntheme={}\nbasis={}\nengine={}\n",
+            self.language.key(),
             self.theme.key(),
             self.basis.key(),
             self.engine.key(),
@@ -178,12 +231,27 @@ mod tests {
 
     #[test]
     fn round_trip() {
-        let s = Settings {
-            theme: ThemeChoice::Dark,
-            basis: Basis::Logical,
-            engine: EngineChoice::Walk,
-        };
-        assert_eq!(Settings::parse(&s.serialize()), s);
+        for language in Language::ALL {
+            let s = Settings {
+                language,
+                theme: ThemeChoice::Dark,
+                basis: Basis::Logical,
+                engine: EngineChoice::Walk,
+            };
+            assert_eq!(Settings::parse(&s.serialize()), s);
+        }
         assert_eq!(Settings::parse("garbage\nbasis=nope"), Settings::default());
+    }
+
+    #[test]
+    fn loads_files_without_language() {
+        // 加入语言设置之前保存的文件：其余设置照常读取，语言跟随系统。
+        let s = Settings::parse("theme=dark\nbasis=logical\nengine=walk\n");
+        assert_eq!(s.language, Language::System);
+        assert_eq!(s.theme, ThemeChoice::Dark);
+        assert_eq!(s.basis, Basis::Logical);
+        assert_eq!(s.engine, EngineChoice::Walk);
+        assert_eq!(Settings::parse("language=ja\n").language, Language::Ja);
+        assert_eq!(Settings::parse("language=fr\n").language, Language::System);
     }
 }

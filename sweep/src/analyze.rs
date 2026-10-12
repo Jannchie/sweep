@@ -7,7 +7,7 @@ use eframe::egui::{
     Sense, Stroke, Ui, UiBuilder, pos2, vec2,
 };
 use egui_extras::{Column, TableBuilder};
-use sweep_scan::{NONE, Tree, flags};
+use sweep_scan::{NONE, Tree, flags, t, tf};
 
 use crate::doc::Doc;
 use crate::file_icons::{self, FileIcons};
@@ -68,14 +68,16 @@ fn kpis(ui: &mut Ui, doc: &Doc) {
     let gap = 12.0;
     let w = ((ui.available_width() - gap * 3.0) / 4.0).floor();
     let basis = if t.by_alloc {
-        "占用空间"
+        t!("占用空间", "Size on disk", "ディスク上のサイズ")
     } else {
-        "文件大小"
+        t!("文件大小", "Size", "サイズ")
     };
     let other = if t.by_alloc {
-        format!("文件大小 {}", fmt_bytes(r.size))
+        let b = fmt_bytes(r.size);
+        tf!("文件大小 {b}", "Size {b}", "サイズ {b}")
     } else {
-        format!("占用 {}", fmt_bytes(r.alloc))
+        let b = fmt_bytes(r.alloc);
+        tf!("占用 {b}", "On disk {b}", "ディスク上 {b}")
     };
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = gap;
@@ -94,25 +96,39 @@ fn kpis(ui: &mut Ui, doc: &Doc) {
             w,
             76.0,
             Icon::Files,
-            "文件",
+            t!("文件", "Files", "ファイル"),
             &fmt_count(r.files as u64),
-            &format!("{} 个文件夹", fmt_count(r.dirs as u64)),
+            &{
+                let n = fmt_count(r.dirs as u64);
+                tf!("{n} 个文件夹", "{n} folders", "フォルダー {n} 個")
+            },
             p.accent,
         );
         let (name, size, share) = match doc.selected {
             Some(s) => (
                 crate::short_name(t, s).to_string(),
                 fmt_bytes(t.value(s)),
-                format!("占全部 {:.1}%", pct(t.value(s), t.value(t.root))),
+                {
+                    let share = pct(t.value(s), t.value(t.root));
+                    tf!(
+                        "占全部 {share:.1}%",
+                        "{share:.1}% of total",
+                        "全体の {share:.1}%"
+                    )
+                },
             ),
-            None => ("未选择".into(), "—".into(), String::new()),
+            None => (
+                t!("未选择", "None", "なし").into(),
+                "—".into(),
+                String::new(),
+            ),
         };
         widgets::kpi(
             ui,
             w,
             76.0,
             Icon::Target,
-            &format!("选中 · {name}"),
+            &tf!("选中 · {name}", "Selected · {name}", "選択中 · {name}"),
             &size,
             &share,
             p.accent,
@@ -122,7 +138,7 @@ fn kpis(ui: &mut Ui, doc: &Doc) {
             w,
             76.0,
             Icon::Clock,
-            "扫描用时",
+            t!("扫描用时", "Scan time", "スキャン時間"),
             &crate::fmt_duration(doc.elapsed),
             doc.engine.label(),
             p.accent,
@@ -151,8 +167,18 @@ fn toolbar(
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
         let chain: Vec<u32> = t.ancestors(doc.zoom).collect();
-        let up = widgets::tool_button(ui, Icon::CornerLeftUp, "上一级", doc.zoom != t.root, false)
-            .on_hover_text("矩形树图回到上一级（Backspace）");
+        let up = widgets::tool_button(
+            ui,
+            Icon::CornerLeftUp,
+            t!("上一级", "Up", "上へ"),
+            doc.zoom != t.root,
+            false,
+        )
+        .on_hover_text(t!(
+            "矩形树图回到上一级（Backspace）",
+            "Treemap up one level (Backspace)",
+            "ツリーマップを 1 つ上の階層へ (Backspace)"
+        ));
         if up.clicked() && doc.zoom != t.root {
             actions.push(Action::ZoomOut);
         }
@@ -181,15 +207,24 @@ fn toolbar(
             let resp = widgets::tool_button(
                 ui,
                 Icon::Trash,
-                "移到回收站",
+                t!("移到回收站", "Move to Recycle Bin", "ごみ箱に移動"),
                 sel.is_some() && !deleting,
                 false,
             );
             let resp = match sel {
                 Some(s) => {
-                    resp.on_hover_text(format!("{}（Delete；Shift+Delete 永久删除）", t.path(s)))
+                    let path = t.path(s);
+                    resp.on_hover_text(tf!(
+                        "{path}（Delete；Shift+Delete 永久删除）",
+                        "{path} (Delete; Shift+Delete to delete permanently)",
+                        "{path} (Delete、Shift+Delete で完全に削除)"
+                    ))
                 }
-                None => resp.on_hover_text("先在列表或矩形树图中选中一项"),
+                None => resp.on_hover_text(t!(
+                    "先在列表或矩形树图中选中一项",
+                    "Select an item in the list or treemap first",
+                    "先にリストかツリーマップで項目を選択してください"
+                )),
             };
             if resp.clicked()
                 && let Some(s) = sel
@@ -199,14 +234,33 @@ fn toolbar(
                     permanent: false,
                 });
             }
-            if widgets::tool_button(ui, Icon::Refresh, "重新扫描", true, false)
-                .on_hover_text(format!("重新扫描 {}", doc.target))
-                .clicked()
+            let target = &doc.target;
+            if widgets::tool_button(
+                ui,
+                Icon::Refresh,
+                t!("重新扫描", "Rescan", "再スキャン"),
+                true,
+                false,
+            )
+            .on_hover_text(tf!(
+                "重新扫描 {target}",
+                "Rescan {target}",
+                "{target} を再スキャン"
+            ))
+            .clicked()
             {
                 actions.push(Action::Refresh);
             }
-            let resp =
-                widgets::search_box(ui, &mut doc.search.query, 260.0, "按名称搜索（Ctrl+F）");
+            let resp = widgets::search_box(
+                ui,
+                &mut doc.search.query,
+                260.0,
+                t!(
+                    "按名称搜索（Ctrl+F）",
+                    "Search by name (Ctrl+F)",
+                    "名前で検索 (Ctrl+F)"
+                ),
+            );
             if std::mem::take(focus_search) {
                 resp.request_focus();
             }
@@ -215,11 +269,17 @@ fn toolbar(
             }
             if doc.search.active() {
                 let text = if doc.search.busy() {
-                    "搜索中…".to_string()
+                    t!("搜索中…", "Searching…", "検索しています…").to_string()
                 } else if doc.search.results.len() >= 2000 {
-                    "前 2000 项".to_string()
+                    t!("前 2000 项", "First 2,000", "先頭の 2,000 件").to_string()
                 } else {
-                    format!("{} 项", fmt_count(doc.search.results.len() as u64))
+                    let n = fmt_count(doc.search.results.len() as u64);
+                    let s = if doc.search.results.len() == 1 {
+                        ""
+                    } else {
+                        "s"
+                    };
+                    tf!("{n} 项", "{n} result{s}", "{n} 件")
                 };
                 ui.label(RichText::new(text).size(12.0).color(p.faint));
             }
@@ -293,11 +353,11 @@ fn tree_table(ui: &mut Ui, doc: &mut Doc, icons: &mut FileIcons, actions: &mut V
     builder
         .header(30.0, |mut h| {
             for (label, right) in [
-                ("名称", false),
-                ("大小", true),
-                ("占上级", false),
-                ("文件", true),
-                ("修改时间", true),
+                (t!("名称", "Name", "名前"), false),
+                (t!("大小", "Size", "サイズ"), true),
+                (t!("占上级", "% of parent", "親に占める割合"), false),
+                (t!("文件", "Files", "ファイル数"), true),
+                (t!("修改时间", "Modified", "更新日時"), true),
             ] {
                 h.col(|ui| widgets::header_label(ui, label, right));
             }
@@ -370,7 +430,14 @@ fn tree_table(ui: &mut Ui, doc: &mut Doc, icons: &mut FileIcons, actions: &mut V
         });
     if n == 0 && searching && !doc.search.busy() {
         ui.add_space(20.0);
-        ui.label(RichText::new("没有名称匹配的项").color(p.muted));
+        ui.label(
+            RichText::new(t!(
+                "没有名称匹配的项",
+                "No names match",
+                "名前が一致する項目はありません"
+            ))
+            .color(p.muted),
+        );
     }
 }
 
@@ -441,16 +508,19 @@ fn name_cell(
             ui.spacing_mut().item_spacing.x = 6.0;
             ui.add(egui::Label::new(RichText::new(t.name(n)).color(p.text)).truncate());
             for (flag, label) in [
-                (flags::DENIED, "无权限"),
-                (flags::META, "NTFS 元数据"),
-                (flags::HARDLINK, "硬链接"),
+                (flags::DENIED, t!("无权限", "No access", "アクセス不可")),
+                (
+                    flags::META,
+                    t!("NTFS 元数据", "NTFS metadata", "NTFS メタデータ"),
+                ),
+                (flags::HARDLINK, t!("硬链接", "Hard link", "ハード リンク")),
             ] {
                 if node.has(flag) {
                     widgets::status_chip(ui, label, p.muted);
                 }
             }
             if node.has(flags::REPARSE) && node.is_dir() && node.first_child == NONE {
-                widgets::status_chip(ui, "链接", p.muted);
+                widgets::status_chip(ui, t!("链接", "Link", "リンク"), p.muted);
             }
             if flat {
                 let parent = node.parent;
@@ -497,35 +567,48 @@ fn node_tooltip(ui: &mut Ui, t: &Tree, n: u32) {
     ui.label(RichText::new(t.path(n)).size(12.0).color(p.faint));
     ui.add_space(4.0);
     ui.label(
-        RichText::new(format!(
-            "文件大小 {} · 占用空间 {}",
-            fmt_bytes(node.size),
-            fmt_bytes(node.alloc)
-        ))
+        RichText::new({
+            let (size, alloc) = (fmt_bytes(node.size), fmt_bytes(node.alloc));
+            tf!(
+                "文件大小 {size} · 占用空间 {alloc}",
+                "Size {size} · Size on disk {alloc}",
+                "サイズ {size} · ディスク上のサイズ {alloc}"
+            )
+        })
         .size(12.5)
         .color(p.muted),
     );
     if node.is_dir() {
         ui.label(
-            RichText::new(format!(
-                "{} 个文件 · {} 个文件夹",
-                fmt_count(node.files as u64),
-                fmt_count(node.dirs as u64)
-            ))
+            RichText::new({
+                let (files, dirs) = (fmt_count(node.files as u64), fmt_count(node.dirs as u64));
+                tf!(
+                    "{files} 个文件 · {dirs} 个文件夹",
+                    "{files} files · {dirs} folders",
+                    "ファイル {files} 個 · フォルダー {dirs} 個"
+                )
+            })
             .size(12.5)
             .color(p.muted),
         );
     }
     ui.label(
-        RichText::new(format!("修改于 {}", fmt_time(node.mtime)))
-            .size(12.5)
-            .color(p.muted),
+        RichText::new({
+            let time = fmt_time(node.mtime);
+            tf!("修改于 {time}", "Modified {time}", "更新日時 {time}")
+        })
+        .size(12.5)
+        .color(p.muted),
     );
     if node.has(flags::HARDLINK) {
         ui.label(
-            RichText::new("同一文件的另一个硬链接，大小已计入第一个名字。")
-                .size(12.0)
-                .color(p.faint),
+            RichText::new(t!(
+                "同一文件的另一个硬链接，大小已计入第一个名字。",
+                "Another hard link to the same file. Its size is counted under the first name.",
+                "同じファイルへの別のハード リンクです。サイズは最初の名前で計上されています。"
+            ))
+            .size(12.0)
+            .color(p.faint),
         );
     }
 }
@@ -535,14 +618,21 @@ fn node_tooltip(ui: &mut Ui, t: &Tree, n: u32) {
 fn types_view(ui: &mut Ui, doc: &Doc, actions: &mut Vec<Action>) {
     let p = Palette::of(ui.ctx());
     let Some(d) = &doc.derived else {
-        ui.label(RichText::new("正在统计文件类型…").color(p.muted));
+        ui.label(
+            RichText::new(t!(
+                "正在统计文件类型…",
+                "Counting file types…",
+                "ファイルの種類を集計しています…"
+            ))
+            .color(p.muted),
+        );
         return;
     };
     let t = &doc.tree;
     let total = t.value(t.root).max(1);
     ui.horizontal(|ui| {
         ui.label(
-            RichText::new("文件类型")
+            RichText::new(t!("文件类型", "File types", "ファイルの種類"))
                 .size(13.0)
                 .family(semibold())
                 .color(p.muted),
@@ -551,8 +641,12 @@ fn types_view(ui: &mut Ui, doc: &Doc, actions: &mut Vec<Action>) {
             if doc.highlight_ext.is_some() {
                 if ui
                     .add(
-                        egui::Label::new(RichText::new("取消突出显示").size(12.0).color(p.accent))
-                            .sense(Sense::click()),
+                        egui::Label::new(
+                            RichText::new(t!("取消突出显示", "Clear highlight", "強調表示を解除"))
+                                .size(12.0)
+                                .color(p.accent),
+                        )
+                        .sense(Sense::click()),
                     )
                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                     .clicked()
@@ -561,9 +655,12 @@ fn types_view(ui: &mut Ui, doc: &Doc, actions: &mut Vec<Action>) {
                 }
             } else {
                 ui.label(
-                    RichText::new(format!("{} 种", fmt_count(d.exts.len() as u64)))
-                        .size(12.0)
-                        .color(p.faint),
+                    RichText::new({
+                        let n = fmt_count(d.exts.len() as u64);
+                        tf!("{n} 种", "{n} types", "{n} 種類")
+                    })
+                    .size(12.0)
+                    .color(p.faint),
                 );
             }
         });
@@ -597,7 +694,7 @@ fn types_view(ui: &mut Ui, doc: &Doc, actions: &mut Vec<Action>) {
                 );
                 ui.painter().rect_filled(sw, CornerRadius::same(2), color);
                 let name = if ext == 0 {
-                    "无扩展名".to_string()
+                    t!("无扩展名", "No extension", "拡張子なし").to_string()
                 } else {
                     format!(".{}", t.exts[ext as usize])
                 };
@@ -629,13 +726,18 @@ fn types_view(ui: &mut Ui, doc: &Doc, actions: &mut Vec<Action>) {
                 ui.painter().text(
                     pos2(inner.right(), inner.bottom() - 3.0),
                     Align2::RIGHT_CENTER,
-                    format!("{} 个", fmt_count(count)),
+                    {
+                        let n = fmt_count(count);
+                        tf!("{n} 个", "{n} files", "{n} 個")
+                    },
                     FontId::proportional(11.0),
                     p.faint,
                 );
-                let resp = resp.on_hover_text(format!(
-                    "{:.1}% · 点击在矩形树图中突出显示",
-                    pct(size, total)
+                let share = pct(size, total);
+                let resp = resp.on_hover_text(tf!(
+                    "{share:.1}% · 点击在矩形树图中突出显示",
+                    "{share:.1}% · Click to highlight in the treemap",
+                    "{share:.1}% · クリックでツリーマップ内を強調表示"
                 ));
                 if resp.clicked() {
                     actions.push(Action::Highlight(if on { None } else { Some(ext) }));
@@ -683,7 +785,7 @@ fn treemap_view(ui: &mut Ui, doc: &mut Doc, tm: &mut Treemap, actions: &mut Vec<
         ui.painter().text(
             rect.center(),
             Align2::CENTER_CENTER,
-            "正在布局…",
+            t!("正在布局…", "Laying out…", "レイアウトしています…"),
             FontId::proportional(13.0),
             p.faint,
         );
@@ -739,19 +841,34 @@ fn treemap_view(ui: &mut Ui, doc: &mut Doc, tm: &mut Treemap, actions: &mut Vec<
         let resp = resp.on_hover_ui_at_pointer(|ui| {
             let n = tile.node;
             if tile.kind == TileKind::Rest {
-                ui.label(RichText::new("其余小文件").family(semibold()).color(p.text));
+                ui.label(
+                    RichText::new(t!("其余小文件", "Other small items", "その他の小さな項目"))
+                        .family(semibold())
+                        .color(p.text),
+                );
                 ui.label(RichText::new(t.path(n)).size(12.0).color(p.faint));
                 ui.label(
-                    RichText::new("面积太小、合并显示的若干项")
-                        .size(12.0)
-                        .color(p.muted),
+                    RichText::new(t!(
+                        "面积太小、合并显示的若干项",
+                        "Items too small to draw, shown together",
+                        "小さすぎるためまとめて表示している項目"
+                    ))
+                    .size(12.0)
+                    .color(p.muted),
                 );
             } else {
                 node_tooltip(ui, &t, n);
                 ui.label(
-                    RichText::new(format!("占当前视图 {:.2}%", pct(t.value(n), total)))
-                        .size(12.0)
-                        .color(p.muted),
+                    RichText::new({
+                        let share = pct(t.value(n), total);
+                        tf!(
+                            "占当前视图 {share:.2}%",
+                            "{share:.2}% of this view",
+                            "このビューの {share:.2}%"
+                        )
+                    })
+                    .size(12.0)
+                    .color(p.muted),
                 );
             }
         });

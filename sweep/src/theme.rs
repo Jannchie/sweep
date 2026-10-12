@@ -1,7 +1,5 @@
 //! 配色、字体与全局样式。跟随系统深浅色。
 
-use std::sync::Arc;
-
 use eframe::egui::{
     self, Color32, CornerRadius, FontFamily, FontId, Margin, Shadow, Stroke, TextStyle, Theme,
     Visuals,
@@ -102,7 +100,6 @@ pub fn semibold() -> FontFamily {
 pub const ROW_HEIGHT: f32 = 28.0;
 
 pub fn install(ctx: &egui::Context) {
-    install_fonts(ctx);
     ctx.options_mut(|o| o.input_options.line_scroll_speed = ROW_HEIGHT * 3.0);
     ctx.set_visuals_of(Theme::Dark, visuals(&DARK, true));
     ctx.set_visuals_of(Theme::Light, visuals(&LIGHT, false));
@@ -205,55 +202,4 @@ fn visuals(p: &Palette, dark: bool) -> Visuals {
     }
     w.noninteractive.bg_stroke = Stroke::new(1.0, p.border);
     v
-}
-
-/// Segoe UI 负责西文与数字（等宽数字，列对齐好看），微软雅黑兜底中文。
-/// 全部内存映射加载：字体文件页可与其他进程共享，不计入私有内存。
-fn install_fonts(ctx: &egui::Context) {
-    let mut fonts = egui::FontDefinitions::default();
-    let mut add = |key: &str, file: &str| {
-        let Some(bytes) = map_font(file) else {
-            return false;
-        };
-        fonts
-            .font_data
-            .insert(key.into(), Arc::new(egui::FontData::from_static(bytes)));
-        true
-    };
-    let ui = add("segoe", "segoeui.ttf");
-    let ui_sb = add("segoe-sb", "seguisb.ttf");
-    let cjk = add("msyh", "msyh.ttc");
-    let cjk_b = add("msyh-b", "msyhbd.ttc");
-
-    let prop = fonts.families.entry(FontFamily::Proportional).or_default();
-    if ui {
-        prop.insert(0, "segoe".into());
-    }
-    if cjk {
-        prop.push("msyh".into());
-    }
-    let defaults = prop.clone();
-    let sb = fonts.families.entry(semibold()).or_default();
-    if ui_sb {
-        sb.push("segoe-sb".into());
-    }
-    if cjk_b {
-        sb.push("msyh-b".into());
-    }
-    sb.extend(defaults);
-    if cjk {
-        fonts
-            .families
-            .entry(FontFamily::Monospace)
-            .or_default()
-            .push("msyh".into());
-    }
-    ctx.set_fonts(fonts);
-}
-
-fn map_font(file: &str) -> Option<&'static [u8]> {
-    let path = std::path::Path::new(r"C:\Windows\Fonts").join(file);
-    let file = std::fs::File::open(path).ok()?;
-    let map = unsafe { memmap2::Mmap::map(&file) }.ok()?;
-    Some(Box::leak(Box::new(map)))
 }

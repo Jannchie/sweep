@@ -5,6 +5,7 @@ use eframe::egui::{
     UiBuilder, pos2, vec2,
 };
 use egui_extras::{Column, TableBuilder};
+use sweep_scan::{t, tf};
 
 use crate::cleanup::{Action as Clean, Suggestion};
 use crate::doc::Doc;
@@ -18,13 +19,17 @@ pub fn show(ui: &mut Ui, doc: &mut Doc, icons: &mut FileIcons, deleting: bool) -
     let mut actions = Vec::new();
     ui.add_space(8.0);
     ui.label(
-        RichText::new("清理")
+        RichText::new(t!("清理", "Clean up", "クリーンアップ"))
             .size(22.0)
             .family(semibold())
             .color(p.text),
     );
     ui.label(
-        RichText::new("常见的可回收空间与最大的文件。所有删除都会先列出内容让你确认。")
+        RichText::new(t!(
+            "常见的可回收空间与最大的文件。所有删除都会先列出内容让你确认。",
+            "Common space you can reclaim, and the largest files. Every deletion lists what it removes and asks first.",
+            "よく空き領域を確保できる場所と、最も大きいファイルです。削除する前に必ず内容を表示して確認します。"
+        ))
             .size(13.0)
             .color(p.muted),
     );
@@ -37,21 +42,39 @@ pub fn show(ui: &mut Ui, doc: &mut Doc, icons: &mut FileIcons, deleting: bool) -
     let right = Rect::from_min_max(pos2(left.right() + gap, avail.top()), avail.max);
 
     ui.scope_builder(UiBuilder::new().max_rect(left), |ui| {
-        section_title(ui, "清理建议");
+        section_title(ui, t!("清理建议", "Suggestions", "おすすめ"));
         egui::ScrollArea::vertical()
             .id_salt("suggestions")
             .auto_shrink([false, false])
             .show(ui, |ui| match &doc.suggestions {
                 None => {
-                    ui.label(RichText::new("正在检查常见位置…").color(p.muted));
+                    ui.label(
+                        RichText::new(t!(
+                            "正在检查常见位置…",
+                            "Checking common locations…",
+                            "よく使われる場所を確認しています…"
+                        ))
+                        .color(p.muted),
+                    );
                 }
                 Some(list) => {
                     if doc.suggestions_loading() {
-                        ui.label(RichText::new("正在更新…").size(12.0).color(p.faint));
+                        ui.label(
+                            RichText::new(t!("正在更新…", "Updating…", "更新しています…"))
+                                .size(12.0)
+                                .color(p.faint),
+                        );
                         ui.add_space(4.0);
                     }
                     if list.is_empty() {
-                        ui.label(RichText::new("没有找到可以清理的常见位置。").color(p.muted));
+                        ui.label(
+                            RichText::new(t!(
+                                "没有找到可以清理的常见位置。",
+                                "Nothing to clean up in the usual places.",
+                                "クリーンアップできる場所は見つかりませんでした。"
+                            ))
+                            .color(p.muted),
+                        );
                     }
                     for s in list {
                         card(ui, s, deleting, &mut actions);
@@ -61,7 +84,7 @@ pub fn show(ui: &mut Ui, doc: &mut Doc, icons: &mut FileIcons, deleting: bool) -
             });
     });
     ui.scope_builder(UiBuilder::new().max_rect(right), |ui| {
-        section_title(ui, "最大的文件");
+        section_title(ui, t!("最大的文件", "Largest files", "最も大きいファイル"));
         largest(ui, doc, icons, &mut actions);
     });
     ui.allocate_rect(avail, Sense::hover());
@@ -92,7 +115,7 @@ fn card(ui: &mut Ui, s: &Suggestion, deleting: bool, actions: &mut Vec<Action>) 
             let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::hover());
             widgets::icon(
                 ui,
-                s.icon,
+                s.kind.icon(),
                 pos2(row.left() + 9.0, row.center().y),
                 17.0,
                 p.accent,
@@ -100,7 +123,7 @@ fn card(ui: &mut Ui, s: &Suggestion, deleting: bool, actions: &mut Vec<Action>) 
             ui.painter().text(
                 pos2(row.left() + 26.0, row.center().y),
                 egui::Align2::LEFT_CENTER,
-                &s.title,
+                s.title(),
                 egui::FontId::new(14.0, semibold()),
                 p.text,
             );
@@ -111,34 +134,78 @@ fn card(ui: &mut Ui, s: &Suggestion, deleting: bool, actions: &mut Vec<Action>) 
                 egui::FontId::new(18.0, semibold()),
                 p.text,
             );
-            ui.add(egui::Label::new(RichText::new(&s.detail).size(12.5).color(p.muted)).wrap());
+            ui.add(egui::Label::new(RichText::new(s.detail()).size(12.5).color(p.muted)).wrap());
             let count = match s.action {
-                Clean::EmptyRecycleBin => format!("{} 项", fmt_count(s.files)),
-                _ => format!("{} 个文件", fmt_count(s.files)),
+                Clean::EmptyRecycleBin => crate::n_items(s.files),
+                _ => {
+                    let (n, plural) = (fmt_count(s.files), if s.files == 1 { "" } else { "s" });
+                    tf!("{n} 个文件", "{n} file{plural}", "ファイル {n} 個")
+                }
             };
+            let del_l = t!("永久删除…", "Delete permanently…", "完全に削除…");
+            let recycle_l = t!("移到回收站", "Move to Recycle Bin", "ごみ箱に移動");
+            let empty_l = t!("清空回收站…", "Empty Recycle Bin…", "ごみ箱を空にする…");
+            let disk_l = t!(
+                "打开磁盘清理",
+                "Open Disk Cleanup",
+                "ディスク クリーンアップを開く"
+            );
+            let locate_l = t!("定位", "Locate", "場所を表示");
+            let mut labels = match s.action {
+                Clean::Contents | Clean::Items => vec![del_l, recycle_l],
+                Clean::EmptyRecycleBin => vec![empty_l],
+                Clean::Info(Some(_)) => vec![disk_l],
+                Clean::Info(None) => vec![],
+            };
+            if !s.folders.is_empty() {
+                labels.push(locate_l);
+            }
+            // 文件数与按钮放不进一行时（较长的语言），文件数单独占一行。
+            let count = RichText::new(count).size(12.0).color(p.faint);
+            let count_w = ui
+                .painter()
+                .layout_no_wrap(
+                    count.text().to_string(),
+                    egui::FontId::proportional(12.0),
+                    p.faint,
+                )
+                .size()
+                .x;
+            let buttons_w = widgets::buttons_width(ui, &labels, 8.0);
+            let same_row = count_w + 16.0 + buttons_w <= ui.available_width();
             ui.add_space(4.0);
+            if !same_row {
+                ui.label(count.clone());
+            }
             ui.horizontal(|ui| {
-                ui.label(RichText::new(count).size(12.0).color(p.faint));
+                if same_row {
+                    ui.label(count);
+                }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
                     match &s.action {
                         Clean::Contents | Clean::Items => {
                             let label = match s.action {
-                                Clean::Contents => format!("{} 中的 {} 项", s.title, s.items.len()),
-                                _ => s.title.clone(),
+                                Clean::Contents => {
+                                    let (title, items) =
+                                        (s.title(), crate::n_items(s.items.len() as u64));
+                                    tf!(
+                                        "{title} 中的 {items}",
+                                        "{items} in {title}",
+                                        "{title} 内の {items}"
+                                    )
+                                }
+                                _ => s.title(),
                             };
                             let ok = !deleting && !s.items.is_empty();
-                            if widgets::card_button(ui, Icon::TrashX, "永久删除…", ok, true)
-                                .clicked()
-                            {
+                            if widgets::card_button(ui, Icon::TrashX, del_l, ok, true).clicked() {
                                 actions.push(Action::Delete {
                                     items: s.items.clone(),
                                     label: label.clone(),
                                     permanent: true,
                                 });
                             }
-                            if widgets::card_button(ui, Icon::Trash, "移到回收站", ok, false)
-                                .clicked()
+                            if widgets::card_button(ui, Icon::Trash, recycle_l, ok, false).clicked()
                             {
                                 actions.push(Action::Delete {
                                     items: s.items.clone(),
@@ -148,35 +215,23 @@ fn card(ui: &mut Ui, s: &Suggestion, deleting: bool, actions: &mut Vec<Action>) 
                             }
                         }
                         Clean::EmptyRecycleBin => {
-                            if widgets::card_button(
-                                ui,
-                                Icon::TrashX,
-                                "清空回收站…",
-                                !deleting,
-                                true,
-                            )
-                            .clicked()
+                            if widgets::card_button(ui, Icon::TrashX, empty_l, !deleting, true)
+                                .clicked()
                             {
                                 actions.push(Action::EmptyRecycleBin(s.size));
                             }
                         }
                         Clean::Info(cmd) => {
                             if let Some(cmd) = cmd
-                                && widgets::card_button(
-                                    ui,
-                                    Icon::ExternalLink,
-                                    "打开磁盘清理",
-                                    true,
-                                    false,
-                                )
-                                .clicked()
+                                && widgets::card_button(ui, Icon::ExternalLink, disk_l, true, false)
+                                    .clicked()
                             {
                                 actions.push(Action::Run(cmd.to_string()));
                             }
                         }
                     }
                     if let Some(f) = s.folders.first()
-                        && widgets::card_button(ui, Icon::Target, "定位", true, false)
+                        && widgets::card_button(ui, Icon::Target, locate_l, true, false)
                             .on_hover_text(f.as_str())
                             .clicked()
                     {
@@ -190,7 +245,7 @@ fn card(ui: &mut Ui, s: &Suggestion, deleting: bool, actions: &mut Vec<Action>) 
 fn largest(ui: &mut Ui, doc: &mut Doc, icons: &mut FileIcons, actions: &mut Vec<Action>) {
     let p = Palette::of(ui.ctx());
     let Some(d) = &doc.derived else {
-        ui.label(RichText::new("正在统计…").color(p.muted));
+        ui.label(RichText::new(t!("正在统计…", "Counting…", "集計しています…")).color(p.muted));
         return;
     };
     let t = doc.tree.clone();
@@ -211,9 +266,9 @@ fn largest(ui: &mut Ui, doc: &mut Doc, icons: &mut FileIcons, actions: &mut Vec<
         .column(Column::exact(80.0))
         .column(Column::exact(112.0))
         .header(30.0, |mut h| {
-            h.col(|ui| widgets::header_label(ui, "文件", false));
-            h.col(|ui| widgets::header_label(ui, "大小", true));
-            h.col(|ui| widgets::header_label(ui, "修改时间", true));
+            h.col(|ui| widgets::header_label(ui, t!("文件", "File", "ファイル"), false));
+            h.col(|ui| widgets::header_label(ui, t!("大小", "Size", "サイズ"), true));
+            h.col(|ui| widgets::header_label(ui, t!("修改时间", "Modified", "更新日時"), true));
         })
         .body(|body| {
             body.rows(theme::ROW_HEIGHT + 8.0, list.len(), |mut row| {
@@ -283,7 +338,11 @@ fn largest(ui: &mut Ui, doc: &mut Doc, icons: &mut FileIcons, actions: &mut Vec<
                 {
                     actions.push(Action::OpenMenu(n, pos));
                 }
-                resp.on_hover_text("双击在目录树中定位，右键查看更多操作");
+                resp.on_hover_text(t!(
+                    "双击在目录树中定位，右键查看更多操作",
+                    "Double-click to locate in the tree. Right-click for more.",
+                    "ダブルクリックでツリー内の場所を表示、右クリックでその他の操作"
+                ));
             });
         });
 }

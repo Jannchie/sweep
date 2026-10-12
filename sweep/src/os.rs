@@ -2,6 +2,7 @@
 //! 这些调用可能很慢（删除大文件夹、网络盘）或弹出系统对话框，除了几个只发消息的函数，
 //! 都应在后台线程调用。
 
+use sweep_scan::t;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Com::{
     CLSCTX_ALL, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE, CoCreateInstance, CoInitializeEx,
@@ -16,7 +17,7 @@ use windows::Win32::UI::Shell::{
     ShellExecuteW,
 };
 use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-use windows::core::{PCWSTR, w};
+use windows::core::{HSTRING, PCWSTR, w};
 
 pub fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain([0]).collect()
@@ -145,14 +146,24 @@ pub fn delete(path: &str, permanent: bool) -> Result<(), String> {
     // 被占用、没有权限时 Shell 只报"操作已中止"，换成说得清楚的话。
     Err(match result {
         Err(e) if e.code() != windows::Win32::Foundation::E_ABORT => error_text(&e),
-        _ => "部分内容正被其他程序使用或没有权限，未能全部删除".into(),
+        _ => t!(
+            "部分内容正被其他程序使用或没有权限，未能全部删除",
+            "Some items are in use by another program or access was denied, so not everything was deleted",
+            "一部の項目がほかのプログラムで使用中か、アクセスが拒否されたため、すべては削除できませんでした"
+        )
+        .into(),
     })
 }
 
 pub fn error_text(e: &windows::core::Error) -> String {
     let msg = e.message().trim().trim_end_matches('。').to_string();
     if msg.is_empty() {
-        format!("错误 0x{:08X}", e.code().0)
+        let code = e.code().0;
+        sweep_scan::tf!(
+            "错误 0x{code:08X}",
+            "Error 0x{code:08X}",
+            "エラー 0x{code:08X}"
+        )
     } else {
         msg
     }
@@ -186,7 +197,12 @@ pub fn pick_folder() -> Option<String> {
     unsafe {
         let dlg: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_ALL).ok()?;
         dlg.SetOptions(FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM).ok()?;
-        let _ = dlg.SetTitle(w!("选择要分析的文件夹"));
+        let title = HSTRING::from(t!(
+            "选择要分析的文件夹",
+            "Choose a folder to analyze",
+            "分析するフォルダーを選択"
+        ));
+        let _ = dlg.SetTitle(&title);
         dlg.Show(Some(owner())).ok()?;
         let item = dlg.GetResult().ok()?;
         let name = item.GetDisplayName(SIGDN_FILESYSPATH).ok()?;

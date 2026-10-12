@@ -7,6 +7,7 @@ mod cleanup_view;
 mod dialogs;
 mod doc;
 mod file_icons;
+mod fonts;
 mod icons_gen;
 mod menu;
 mod os;
@@ -25,7 +26,7 @@ use std::time::{Duration, Instant};
 
 use eframe::egui::{self, Align, Frame, Key, Layout, Margin, RichText, Sense, Ui, pos2, vec2};
 use sweep_scan::system::Volume;
-use sweep_scan::{NONE, Scan, flags};
+use sweep_scan::{NONE, Scan, flags, t, tf};
 
 use cleanup::Item;
 use dialogs::{Decision, DeleteRequest, Toast};
@@ -161,9 +162,10 @@ struct App {
 
 impl App {
     fn new(ctx: &egui::Context) -> Self {
-        theme::install(ctx);
-        egui_extras::install_image_loaders(ctx);
         let settings = Settings::load();
+        theme::install(ctx);
+        apply_language(ctx, settings.language);
+        egui_extras::install_image_loaders(ctx);
         ctx.set_theme(settings.theme.preference());
         let mut app = Self {
             view: View::Disks,
@@ -299,7 +301,7 @@ impl App {
             Action::Open(p) => os::open(&p),
             Action::Copy(text) => {
                 ctx.copy_text(text.clone());
-                self.notify_ok("已复制".into(), Some(text));
+                self.notify_ok(t!("已复制", "Copied", "コピーしました").into(), Some(text));
             }
             Action::Properties(p) => os::properties(&p),
             Action::Delete {
@@ -308,7 +310,15 @@ impl App {
                 permanent,
             } => {
                 if self.deleting {
-                    self.notify_err("上一次删除还没有完成".into(), None);
+                    self.notify_err(
+                        t!(
+                            "上一次删除还没有完成",
+                            "The previous deletion is still running",
+                            "前回の削除がまだ完了していません"
+                        )
+                        .into(),
+                        None,
+                    );
                 } else if !items.is_empty() {
                     self.modal = Some(Modal::Delete(DeleteRequest {
                         items: items
@@ -326,7 +336,7 @@ impl App {
                 let nodes: Vec<u32> = nodes.into_iter().filter(|&n| deletable(t, n)).collect();
                 let label = match nodes.as_slice() {
                     [n] => t.name(*n).to_string(),
-                    v => format!("{} 项", v.len()),
+                    v => n_items(v.len() as u64),
                 };
                 let items = nodes
                     .iter()
@@ -390,7 +400,18 @@ impl App {
         let Some(d) = &self.doc else { return };
         let path = d.tree.path(n);
         let by_alloc = d.tree.by_alloc;
-        self.notify_ok(format!("正在重新扫描 {}", d.tree.name(n)), None);
+        let name = d.tree.name(n);
+        self.toasts.push(
+            Toast::ok(
+                tf!(
+                    "正在重新扫描 {name}…",
+                    "Rescanning {name}…",
+                    "{name} を再スキャンしています…"
+                ),
+                None,
+            )
+            .tag(TAG_RESCAN),
+        );
         self.spawn(ctx, move || {
             match sweep_scan::walk::scan(
                 &path,
@@ -402,7 +423,14 @@ impl App {
                     node: n,
                     tree: Box::new(tree),
                 },
-                Err(e) => Job::Toast(Toast::err(format!("无法重新扫描 {path}"), Some(e))),
+                Err(e) => Job::Toast(Toast::err(
+                    tf!(
+                        "无法重新扫描 {path}",
+                        "Couldn't rescan {path}",
+                        "{path} を再スキャンできませんでした"
+                    ),
+                    Some(e),
+                )),
             }
         });
     }
@@ -414,12 +442,17 @@ impl App {
                 let size = req.total();
                 let paths: Vec<String> = req.items.into_iter().map(|i| i.0).collect();
                 self.deleting = true;
-                let verb = if permanent {
-                    "删除"
+                let title = if permanent {
+                    t!("正在删除…", "Deleting…", "削除しています…")
                 } else {
-                    "移到回收站"
+                    t!(
+                        "正在移到回收站…",
+                        "Moving to the Recycle Bin…",
+                        "ごみ箱に移動しています…"
+                    )
                 };
-                self.notify_ok(format!("正在{verb}…"), None);
+                self.toasts
+                    .push(Toast::ok(title.into(), None).tag(TAG_DELETE));
                 self.spawn(ctx, move || {
                     let results = paths
                         .into_iter()
@@ -455,11 +488,18 @@ impl App {
                 }
                 Job::Picked(p) => self.start_scan(ctx, &p),
                 Job::Rescanned { node, tree } => {
-                    self.toasts.retain(|t| !t.title.starts_with("正在重新扫描"));
+                    self.toasts.retain(|t| t.tag != TAG_RESCAN);
                     if let Some(d) = &mut self.doc {
                         let name = d.tree.name(node).to_string();
                         d.mutate(Mutation::Graft(node, tree));
-                        self.notify_ok(format!("已重新扫描 {name}"), None);
+                        self.notify_ok(
+                            tf!(
+                                "已重新扫描 {name}",
+                                "Rescanned {name}",
+                                "{name} を再スキャンしました"
+                            ),
+                            None,
+                        );
                     }
                 }
                 Job::Deleted {
@@ -469,8 +509,24 @@ impl App {
                 } => self.after_delete(ctx, results, permanent, size),
                 Job::RecycleEmptied(r) => {
                     match r {
-                        Ok(()) => self.notify_ok("已清空回收站".into(), None),
-                        Err(e) => self.notify_err("无法清空回收站".into(), Some(e)),
+                        Ok(()) => self.notify_ok(
+                            t!(
+                                "已清空回收站",
+                                "Recycle Bin emptied",
+                                "ごみ箱を空にしました"
+                            )
+                            .into(),
+                            None,
+                        ),
+                        Err(e) => self.notify_err(
+                            t!(
+                                "无法清空回收站",
+                                "Couldn't empty the Recycle Bin",
+                                "ごみ箱を空にできませんでした"
+                            )
+                            .into(),
+                            Some(e),
+                        ),
                     }
                     self.after_space_change(ctx);
                 }
@@ -487,7 +543,7 @@ impl App {
         size: u64,
     ) {
         self.deleting = false;
-        self.toasts.retain(|t| !t.title.starts_with("正在"));
+        self.toasts.retain(|t| t.tag != TAG_DELETE);
         let failed: Vec<&(String, Result<(), String>)> =
             results.iter().filter(|r| r.1.is_err()).collect();
         let mut rescan = Vec::new();
@@ -504,24 +560,51 @@ impl App {
         for n in rescan {
             self.rescan(ctx, n);
         }
-        let verb = if permanent {
-            "永久删除"
-        } else {
-            "移到回收站"
-        };
-        let done = results.len() - failed.len();
+        let done = (results.len() - failed.len()) as u64;
+        let n = n_items(done);
+        let failures = failed.len();
         match failed.first() {
-            None => self.notify_ok(
-                format!("已{verb} {done} 项"),
-                Some(format!("共 {}", fmt_bytes(size))),
-            ),
-            Some((p, Err(e))) => {
-                let title = if done == 0 {
-                    format!("无法{verb}")
+            None => {
+                let title = if permanent {
+                    tf!(
+                        "已永久删除 {n}",
+                        "Permanently deleted {n}",
+                        "{n}を完全に削除しました"
+                    )
                 } else {
-                    format!("已{verb} {done} 项，{} 项失败", failed.len())
+                    tf!(
+                        "已将 {n}移到回收站",
+                        "Moved {n} to the Recycle Bin",
+                        "{n}をごみ箱に移動しました"
+                    )
                 };
-                self.notify_err(title, Some(format!("{p}：{e}")));
+                let size = fmt_bytes(size);
+                self.notify_ok(
+                    title,
+                    Some(tf!("共 {size}", "{size} in total", "合計 {size}")),
+                );
+            }
+            Some((p, Err(e))) => {
+                let title = match (done, permanent) {
+                    (0, true) => t!("无法删除", "Couldn't delete", "削除できませんでした").into(),
+                    (0, false) => t!(
+                        "无法移到回收站",
+                        "Couldn't move to the Recycle Bin",
+                        "ごみ箱に移動できませんでした"
+                    )
+                    .into(),
+                    (_, true) => tf!(
+                        "已永久删除 {n}，{failures} 项失败",
+                        "Permanently deleted {n}; {failures} failed",
+                        "{n}を完全に削除しました ({failures} 個は失敗)"
+                    ),
+                    (_, false) => tf!(
+                        "已将 {n}移到回收站，{failures} 项失败",
+                        "Moved {n} to the Recycle Bin; {failures} failed",
+                        "{n}をごみ箱に移動しました ({failures} 個は失敗)"
+                    ),
+                };
+                self.notify_err(title, Some(format!("{p}: {e}")));
             }
             Some(_) => {}
         }
@@ -652,9 +735,17 @@ impl App {
         ui.add_space(14.0);
 
         for (view, glyph, label) in [
-            (View::Disks, Icon::HardDrive, "磁盘"),
-            (View::Analyze, Icon::Treemap, "分析"),
-            (View::Cleanup, Icon::Broom, "清理"),
+            (
+                View::Disks,
+                Icon::HardDrive,
+                t!("磁盘", "Drives", "ドライブ"),
+            ),
+            (View::Analyze, Icon::Treemap, t!("分析", "Analyze", "分析")),
+            (
+                View::Cleanup,
+                Icon::Broom,
+                t!("清理", "Clean up", "クリーンアップ"),
+            ),
         ] {
             let resp = tab(ui, self.view == view, glyph, label);
             holes.push(resp.rect);
@@ -670,7 +761,12 @@ impl App {
             } else {
                 ui.add_space(20.0);
             }
-            let resp = tab(ui, self.view == View::Settings, Icon::Settings, "设置");
+            let resp = tab(
+                ui,
+                self.view == View::Settings,
+                Icon::Settings,
+                t!("设置", "Settings", "設定"),
+            );
             holes.push(resp.rect);
             if resp.clicked() {
                 self.view = View::Settings;
@@ -690,26 +786,45 @@ impl App {
             if let Some(d) = &self.doc {
                 let t = &d.tree;
                 let mem = t.memory() as f64 / 1048576.0;
-                ui.label(faint(format!(
-                    "{} · {} · {} 个文件 · {} 个文件夹 · 用时 {} · 内存 {mem:.0} MB",
-                    d.target,
-                    d.engine.label(),
-                    fmt_count(t.node(t.root).files as u64),
-                    fmt_count(t.node(t.root).dirs as u64),
-                    fmt_duration(d.elapsed),
+                let (target, engine) = (&d.target, d.engine.label());
+                let files = fmt_count(t.node(t.root).files as u64);
+                let dirs = fmt_count(t.node(t.root).dirs as u64);
+                let took = fmt_duration(d.elapsed);
+                ui.label(faint(tf!(
+                    "{target} · {engine} · {files} 个文件 · {dirs} 个文件夹 · 用时 {took} · 内存 {mem:.0} MB",
+                    "{target} · {engine} · {files} files · {dirs} folders · {took} · {mem:.0} MB memory",
+                    "{target} · {engine} · ファイル {files} 個 · フォルダー {dirs} 個 · {took} · メモリ {mem:.0} MB"
                 )));
             } else {
-                ui.label(faint("还没有分析过磁盘".into()));
+                ui.label(faint(
+                    t!(
+                        "还没有分析过磁盘",
+                        "Nothing analyzed yet",
+                        "まだ何も分析していません"
+                    )
+                    .into(),
+                ));
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if self.elevated {
-                    ui.label(faint("管理员".into()));
+                    ui.label(faint(t!("管理员", "Administrator", "管理者").into()));
                 }
                 if let Some(e) = self.doc.as_ref().and_then(|d| d.mft_fallback.as_deref()) {
-                    ui.label(faint(format!("读取 MFT 失败（{e}），已改用目录遍历")));
+                    ui.label(faint(tf!(
+                        "读取 MFT 失败（{e}），已改用目录遍历",
+                        "Couldn't read the MFT ({e}); walked folders instead",
+                        "MFT を読み取れなかったため、フォルダー走査に切り替えました ({e})"
+                    )));
                 }
                 if self.doc.as_ref().is_some_and(|d| d.basis_busy()) {
-                    ui.label(faint("正在按新的大小口径重新排序…".into()));
+                    ui.label(faint(
+                        t!(
+                            "正在按新的大小口径重新排序…",
+                            "Re-sorting by the new size basis…",
+                            "新しいサイズ基準で並べ替えています…"
+                        )
+                        .into(),
+                    ));
                 }
             });
         });
@@ -904,6 +1019,9 @@ impl eframe::App for App {
                     settings_view::show(ui, &mut self.settings, self.elevated)
                 });
                 if self.settings != before {
+                    if self.settings.language != before.language {
+                        apply_language(&ctx, self.settings.language);
+                    }
                     if self.settings.theme != before.theme {
                         ctx.set_theme(self.settings.theme.preference());
                     }
@@ -934,12 +1052,20 @@ impl eframe::App for App {
                 Modal::EmptyRecycleBin(size) => dialogs::confirm(
                     &ctx,
                     "recycle",
-                    "清空回收站？",
-                    &format!(
-                        "将永久删除所有驱动器回收站里的文件（共 {}），无法恢复。",
-                        fmt_bytes(*size)
+                    t!(
+                        "清空回收站？",
+                        "Empty the Recycle Bin?",
+                        "ごみ箱を空にしますか?"
                     ),
-                    "清空回收站",
+                    &{
+                        let size = fmt_bytes(*size);
+                        tf!(
+                            "将永久删除所有驱动器回收站里的文件（共 {size}），无法恢复。",
+                            "Everything in the Recycle Bin on all drives ({size}) will be permanently deleted. This can't be undone.",
+                            "すべてのドライブのごみ箱にあるファイル (合計 {size}) を完全に削除します。元に戻すことはできません。"
+                        )
+                    },
+                    t!("清空回收站", "Empty Recycle Bin", "ごみ箱を空にする"),
                 ),
             };
             match decision {
@@ -971,6 +1097,24 @@ impl eframe::App for App {
             self.apply(&ctx, a);
         }
     }
+}
+
+/// 通知的标记：进行中的通知在操作完成时按标记收走。
+const TAG_RESCAN: &str = "rescan";
+const TAG_DELETE: &str = "delete";
+
+/// 切换界面语言：文案在每帧按当前语言生成，这里只需换掉字体（日文用日本的汉字字形）。
+fn apply_language(ctx: &egui::Context, language: settings::Language) {
+    let lang = language.resolve();
+    sweep_scan::i18n::set_lang(lang);
+    fonts::install(ctx, lang);
+}
+
+/// "3 项" / "3 items" / "3 個の項目"。
+pub fn n_items(n: u64) -> String {
+    let c = fmt_count(n);
+    let s = if n == 1 { "" } else { "s" };
+    tf!("{c} 项", "{c} item{s}", "{c} 個の項目")
 }
 
 /// 标题行里的页签：图标 + 文字，选中时有底色。
@@ -1153,9 +1297,10 @@ pub fn fmt_count(n: u64) -> String {
 pub fn fmt_duration(d: Duration) -> String {
     let s = d.as_secs_f64();
     if s < 60.0 {
-        format!("{s:.1} 秒")
+        tf!("{s:.1} 秒", "{s:.1} s", "{s:.1} 秒")
     } else {
-        format!("{} 分 {} 秒", s as u64 / 60, s as u64 % 60)
+        let (m, s) = (s as u64 / 60, s as u64 % 60);
+        tf!("{m} 分 {s} 秒", "{m} min {s} s", "{m} 分 {s} 秒")
     }
 }
 

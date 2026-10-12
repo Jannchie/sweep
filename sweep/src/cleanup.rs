@@ -5,7 +5,7 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use sweep_scan::{Progress, Tree, flags};
+use sweep_scan::{Progress, Tree, flags, t, tf};
 
 use crate::icons_gen::Icon;
 
@@ -29,11 +29,42 @@ pub enum Action {
     Info(Option<&'static str>),
 }
 
+/// 清理建议的种类。标题和说明在显示时按当前语言生成，切换语言后立即生效。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    UserTemp,
+    SystemTemp,
+    /// 浏览器缓存（浏览器名）。
+    Browser(&'static str),
+    Npm,
+    Yarn,
+    Pnpm,
+    Pip,
+    Uv,
+    Cargo,
+    NuGet,
+    Gradle,
+    HuggingFace,
+    NodeModules,
+    RecycleBin,
+    WindowsUpdate,
+}
+
+impl Kind {
+    pub fn icon(self) -> Icon {
+        match self {
+            Kind::UserTemp | Kind::SystemTemp => Icon::Clock,
+            Kind::Browser(_) => Icon::Globe,
+            Kind::RecycleBin => Icon::Trash,
+            Kind::WindowsUpdate => Icon::Info,
+            _ => Icon::Package,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Suggestion {
-    pub icon: Icon,
-    pub title: String,
-    pub detail: String,
+    pub kind: Kind,
     pub size: u64,
     pub files: u64,
     /// 执行清理时要删除的对象。
@@ -43,28 +74,158 @@ pub struct Suggestion {
     pub folders: Vec<String>,
 }
 
+impl Suggestion {
+    pub fn title(&self) -> String {
+        match self.kind {
+            Kind::UserTemp => t!(
+                "用户临时文件",
+                "User temporary files",
+                "ユーザーの一時ファイル"
+            )
+            .into(),
+            Kind::SystemTemp => t!(
+                "系统临时文件",
+                "System temporary files",
+                "システムの一時ファイル"
+            )
+            .into(),
+            Kind::Browser(name) => tf!("{name} 浏览器缓存", "{name} cache", "{name} のキャッシュ"),
+            Kind::Npm => t!("npm 缓存", "npm cache", "npm キャッシュ").into(),
+            Kind::Yarn => t!("Yarn 缓存", "Yarn cache", "Yarn キャッシュ").into(),
+            Kind::Pnpm => t!("pnpm 存储", "pnpm store", "pnpm ストア").into(),
+            Kind::Pip => t!("pip 缓存", "pip cache", "pip キャッシュ").into(),
+            Kind::Uv => t!("uv 缓存", "uv cache", "uv キャッシュ").into(),
+            Kind::Cargo => t!(
+                "Cargo 下载缓存",
+                "Cargo download cache",
+                "Cargo ダウンロード キャッシュ"
+            )
+            .into(),
+            Kind::NuGet => t!(
+                "NuGet 包缓存",
+                "NuGet package cache",
+                "NuGet パッケージ キャッシュ"
+            )
+            .into(),
+            Kind::Gradle => t!("Gradle 缓存", "Gradle cache", "Gradle キャッシュ").into(),
+            Kind::HuggingFace => t!(
+                "Hugging Face 缓存",
+                "Hugging Face cache",
+                "Hugging Face キャッシュ"
+            )
+            .into(),
+            Kind::NodeModules => {
+                let n = self.items.len();
+                let s = if n == 1 { "" } else { "s" };
+                tf!(
+                    "node_modules（{n} 个项目）",
+                    "node_modules ({n} project{s})",
+                    "node_modules ({n} プロジェクト)"
+                )
+            }
+            Kind::RecycleBin => t!("回收站", "Recycle Bin", "ごみ箱").into(),
+            Kind::WindowsUpdate => t!(
+                "Windows 更新缓存",
+                "Windows Update cache",
+                "Windows Update キャッシュ"
+            )
+            .into(),
+        }
+    }
+
+    pub fn detail(&self) -> &'static str {
+        match self.kind {
+            Kind::UserTemp => t!(
+                "程序运行时留下的临时文件。正在使用的会被跳过。",
+                "Temporary files left by apps. Files in use are skipped.",
+                "アプリが残した一時ファイルです。使用中のファイルはスキップされます。"
+            ),
+            Kind::SystemTemp => t!(
+                "Windows 与安装程序留下的临时文件，需要管理员权限才能全部清理。",
+                "Temporary files left by Windows and installers. Removing all of them requires administrator rights.",
+                "Windows やインストーラーが残した一時ファイルです。すべて削除するには管理者権限が必要です。"
+            ),
+            Kind::Browser(_) => t!(
+                "网页缓存，删除后再访问时会重新下载。请先关闭浏览器。",
+                "Cached web content. Sites download it again on your next visit. Close the browser first.",
+                "Web ページのキャッシュです。次回アクセス時に再ダウンロードされます。先にブラウザーを閉じてください。"
+            ),
+            Kind::Npm => t!(
+                "npm 下载过的包。删除后安装依赖时会重新下载。",
+                "Packages downloaded by npm. They're downloaded again when you install dependencies.",
+                "npm がダウンロードしたパッケージです。依存関係のインストール時に再ダウンロードされます。"
+            ),
+            Kind::Yarn => t!(
+                "Yarn 下载过的包。删除后安装依赖时会重新下载。",
+                "Packages downloaded by Yarn. They're downloaded again when you install dependencies.",
+                "Yarn がダウンロードしたパッケージです。依存関係のインストール時に再ダウンロードされます。"
+            ),
+            Kind::Pnpm => t!(
+                "项目里的 node_modules 硬链接到这里，删除只能腾出已无项目使用的部分；也可以运行 pnpm store prune。",
+                "Projects hard-link their node_modules here, so deleting only frees what no project uses. You can also run pnpm store prune.",
+                "各プロジェクトの node_modules はここへのハード リンクのため、削除で空くのはどのプロジェクトも使っていない部分だけです。pnpm store prune も使えます。"
+            ),
+            Kind::Pip => t!(
+                "pip 下载与编译过的包。删除后安装时会重新下载。",
+                "Packages downloaded and built by pip. They're downloaded again on the next install.",
+                "pip がダウンロード・ビルドしたパッケージです。次回のインストール時に再ダウンロードされます。"
+            ),
+            Kind::Uv => t!(
+                "uv 下载过的包与解释器。删除后会按需重新下载。",
+                "Packages and interpreters downloaded by uv. They're downloaded again when needed.",
+                "uv がダウンロードしたパッケージとインタープリターです。必要に応じて再ダウンロードされます。"
+            ),
+            Kind::Cargo => t!(
+                "crates.io 的压缩包与解压后的源码。删除后构建时会重新下载。",
+                "Crate archives and unpacked sources from crates.io. They're downloaded again on the next build.",
+                "crates.io のアーカイブと展開済みソースです。次回のビルド時に再ダウンロードされます。"
+            ),
+            Kind::NuGet => t!(
+                ".NET 项目用到的包。删除后还原时会重新下载。",
+                "Packages used by .NET projects. They're downloaded again on the next restore.",
+                ".NET プロジェクトが使うパッケージです。次回の復元時に再ダウンロードされます。"
+            ),
+            Kind::Gradle => t!(
+                "Gradle 下载的依赖与构建缓存。删除后构建时会重新下载。",
+                "Dependencies and build cache downloaded by Gradle. They're downloaded again on the next build.",
+                "Gradle がダウンロードした依存関係とビルド キャッシュです。次回のビルド時に再ダウンロードされます。"
+            ),
+            Kind::HuggingFace => t!(
+                "下载过的模型与数据集，通常很大。删除后用到时需要重新下载。",
+                "Downloaded models and datasets, often very large. They have to be downloaded again when used.",
+                "ダウンロード済みのモデルとデータセットで、通常かなり大きくなります。使用時に再ダウンロードが必要です。"
+            ),
+            Kind::NodeModules => t!(
+                "JavaScript 项目安装的依赖。删除后在项目里重新运行 npm install / pnpm install 即可恢复。",
+                "Dependencies installed by JavaScript projects. Run npm install / pnpm install in a project to restore them.",
+                "JavaScript プロジェクトにインストールされた依存関係です。プロジェクトで npm install / pnpm install を実行すれば元に戻せます。"
+            ),
+            Kind::RecycleBin => t!(
+                "所有驱动器回收站里的文件。清空后无法恢复。",
+                "Files in the Recycle Bin on all drives. They can't be restored after you empty it.",
+                "すべてのドライブのごみ箱にあるファイルです。空にすると復元できません。"
+            ),
+            Kind::WindowsUpdate => t!(
+                "已下载的更新安装包。建议用系统的“磁盘清理”（清理系统文件）处理，不要直接删除。",
+                "Downloaded update packages. Use Disk Cleanup (Clean up system files) instead of deleting them directly.",
+                "ダウンロード済みの更新プログラムです。直接削除せず、ディスク クリーンアップ (システム ファイルのクリーンアップ) を使ってください。"
+            ),
+        }
+    }
+}
+
 fn env(name: &str) -> String {
     std::env::var(name).unwrap_or_default()
 }
 
-/// (标题, 图标, 说明, 文件夹列表)
-fn candidates() -> Vec<(String, Icon, &'static str, Vec<String>)> {
+/// (种类, 文件夹列表)
+fn candidates() -> Vec<(Kind, Vec<String>)> {
     let local = env("LOCALAPPDATA");
     let home = env("USERPROFILE");
     let windir = env("WINDIR");
     let mut v = vec![
-        (
-            "用户临时文件".to_string(),
-            Icon::Clock,
-            "程序运行时留下的临时文件。正在使用的会被跳过。",
-            vec![env("TEMP")],
-        ),
-        (
-            "系统临时文件".to_string(),
-            Icon::Clock,
-            "Windows 与安装程序留下的临时文件，需要管理员权限才能全部清理。",
-            vec![format!(r"{windir}\Temp")],
-        ),
+        (Kind::UserTemp, vec![env("TEMP")]),
+        (Kind::SystemTemp, vec![format!(r"{windir}\Temp")]),
     ];
     // 浏览器缓存：每个配置文件下的 Cache、Code Cache、GPUCache。
     for (name, base) in [
@@ -81,74 +242,34 @@ fn candidates() -> Vec<(String, Icon, &'static str, Vec<String>)> {
                 dirs.push(format!(r"{profile}\{sub}"));
             }
         }
-        v.push((
-            format!("{name} 浏览器缓存"),
-            Icon::Globe,
-            "网页缓存，删除后再访问时会重新下载。请先关闭浏览器。",
-            dirs,
-        ));
+        v.push((Kind::Browser(name), dirs));
     }
     let firefox: Vec<String> = subdirs(&format!(r"{local}\Mozilla\Firefox\Profiles"))
         .into_iter()
         .map(|p| format!(r"{p}\cache2"))
         .collect();
-    v.push((
-        "Firefox 浏览器缓存".into(),
-        Icon::Globe,
-        "网页缓存，删除后再访问时会重新下载。请先关闭浏览器。",
-        firefox,
-    ));
-    for (name, desc, dirs) in [
+    v.push((Kind::Browser("Firefox"), firefox));
+    for (kind, dirs) in [
+        (Kind::Npm, vec![format!(r"{local}\npm-cache")]),
+        (Kind::Yarn, vec![format!(r"{local}\Yarn\Cache")]),
+        (Kind::Pnpm, vec![format!(r"{local}\pnpm\store")]),
+        (Kind::Pip, vec![format!(r"{local}\pip\Cache")]),
+        (Kind::Uv, vec![format!(r"{local}\uv\cache")]),
         (
-            "npm 缓存",
-            "npm 下载过的包。删除后安装依赖时会重新下载。",
-            vec![format!(r"{local}\npm-cache")],
-        ),
-        (
-            "Yarn 缓存",
-            "Yarn 下载过的包。删除后安装依赖时会重新下载。",
-            vec![format!(r"{local}\Yarn\Cache")],
-        ),
-        (
-            "pnpm 存储",
-            "项目里的 node_modules 硬链接到这里，删除只能腾出已无项目使用的部分；也可以运行 pnpm store prune。",
-            vec![format!(r"{local}\pnpm\store")],
-        ),
-        (
-            "pip 缓存",
-            "pip 下载与编译过的包。删除后安装时会重新下载。",
-            vec![format!(r"{local}\pip\Cache")],
-        ),
-        (
-            "uv 缓存",
-            "uv 下载过的包与解释器。删除后会按需重新下载。",
-            vec![format!(r"{local}\uv\cache")],
-        ),
-        (
-            "Cargo 下载缓存",
-            "crates.io 的压缩包与解压后的源码。删除后构建时会重新下载。",
+            Kind::Cargo,
             vec![
                 format!(r"{home}\.cargo\registry\cache"),
                 format!(r"{home}\.cargo\registry\src"),
             ],
         ),
+        (Kind::NuGet, vec![format!(r"{home}\.nuget\packages")]),
+        (Kind::Gradle, vec![format!(r"{home}\.gradle\caches")]),
         (
-            "NuGet 包缓存",
-            ".NET 项目用到的包。删除后还原时会重新下载。",
-            vec![format!(r"{home}\.nuget\packages")],
-        ),
-        (
-            "Gradle 缓存",
-            "Gradle 下载的依赖与构建缓存。删除后构建时会重新下载。",
-            vec![format!(r"{home}\.gradle\caches")],
-        ),
-        (
-            "Hugging Face 缓存",
-            "下载过的模型与数据集，通常很大。删除后用到时需要重新下载。",
+            Kind::HuggingFace,
             vec![format!(r"{home}\.cache\huggingface\hub")],
         ),
     ] {
-        v.push((name.to_string(), Icon::Package, desc, dirs));
+        v.push((kind, dirs));
     }
     v
 }
@@ -184,7 +305,7 @@ pub fn compute(tree: Arc<Tree>) -> Vec<Suggestion> {
     let mut outside: Vec<(usize, String)> = Vec::new();
 
     // 第一步：扫描结果里能找到的直接取。
-    for (title, icon, detail, dirs) in candidates() {
+    for (kind, dirs) in candidates() {
         let dirs: Vec<String> = dirs
             .into_iter()
             .filter(|d| !d.is_empty() && std::path::Path::new(d).is_dir())
@@ -194,9 +315,7 @@ pub fn compute(tree: Arc<Tree>) -> Vec<Suggestion> {
         }
         let k = out.len();
         let mut s = Suggestion {
-            icon,
-            title,
-            detail: detail.to_string(),
+            kind,
             size: 0,
             files: 0,
             items: Vec::new(),
@@ -244,10 +363,7 @@ pub fn compute(tree: Arc<Tree>) -> Vec<Suggestion> {
             })
             .collect();
         out.push(Suggestion {
-            icon: Icon::Package,
-            title: format!("node_modules（{} 个项目）", items.len()),
-            detail: "JavaScript 项目安装的依赖。删除后在项目里重新运行 npm install / pnpm install 即可恢复。"
-                .into(),
+            kind: Kind::NodeModules,
             size: items.iter().map(|i| i.size).sum(),
             files: items.iter().map(|i| i.files).sum(),
             folders: items.iter().take(1).map(|i| i.path.clone()).collect(),
@@ -277,9 +393,7 @@ pub fn compute(tree: Arc<Tree>) -> Vec<Suggestion> {
         && n > 0
     {
         out.push(Suggestion {
-            icon: Icon::Trash,
-            title: "回收站".into(),
-            detail: "所有驱动器回收站里的文件。清空后无法恢复。".into(),
+            kind: Kind::RecycleBin,
             size,
             files: n,
             items: Vec::new(),
@@ -296,11 +410,7 @@ pub fn compute(tree: Arc<Tree>) -> Vec<Suggestion> {
         && t.value(t.root) > 0
     {
         out.push(Suggestion {
-            icon: Icon::Info,
-            title: "Windows 更新缓存".into(),
-            detail:
-                "已下载的更新安装包。建议用系统的“磁盘清理”（清理系统文件）处理，不要直接删除。"
-                    .into(),
+            kind: Kind::WindowsUpdate,
             size: t.value(t.root),
             files: t.node(t.root).files as u64,
             items: Vec::new(),

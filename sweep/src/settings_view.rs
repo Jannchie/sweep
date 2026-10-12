@@ -5,7 +5,9 @@ use eframe::egui::{
     Stroke, Ui, pos2, vec2,
 };
 
-use crate::settings::{Basis, EngineChoice, Settings, ThemeChoice};
+use sweep_scan::{t, tf};
+
+use crate::settings::{Basis, EngineChoice, Language, Settings, ThemeChoice};
 use crate::theme::{Palette, semibold};
 use crate::widgets;
 
@@ -22,18 +24,22 @@ pub fn show(ui: &mut Ui, settings: &mut Settings, elevated: bool) {
                     ui.set_width(w);
                     ui.add_space(8.0);
                     ui.label(
-                        RichText::new("设置")
+                        RichText::new(t!("设置", "Settings", "設定"))
                             .size(22.0)
                             .family(semibold())
                             .color(Palette::of(ui.ctx()).text),
                     );
                     ui.add_space(4.0);
 
-                    group(ui, "分析", |ui| {
+                    group(ui, t!("分析", "Analysis", "分析"), |ui| {
                         row(
                             ui,
-                            "大小口径",
-                            "排序、矩形树图面积与百分比按哪种大小计算。占用空间就是删除后能腾出的空间。",
+                            t!("大小口径", "Size basis", "サイズの基準"),
+                            t!(
+                                "排序、矩形树图面积与百分比按哪种大小计算。占用空间就是删除后能腾出的空间。",
+                                "Which size drives sorting, treemap areas and percentages. Size on disk is the space you get back by deleting.",
+                                "並べ替え、ツリーマップの面積、割合に使うサイズです。ディスク上のサイズは削除して空く容量です。"
+                            ),
                             |ui| {
                                 let labels = Basis::ALL.map(|b| b.label());
                                 let cur = Basis::ALL.iter().position(|&b| b == settings.basis).unwrap_or(0);
@@ -44,11 +50,19 @@ pub fn show(ui: &mut Ui, settings: &mut Settings, elevated: bool) {
                         );
                         divider(ui);
                         let desc = if elevated {
-                            "读取 MFT 只适用于 NTFS 卷的根目录；文件夹、其他文件系统总是遍历目录。"
+                            t!(
+                                "读取 MFT 只适用于 NTFS 卷的根目录；文件夹、其他文件系统总是遍历目录。",
+                                "MFT reading works only for the root of an NTFS volume. Folders and other file systems are always walked.",
+                                "MFT の読み取りは NTFS ボリュームのルートでのみ使えます。フォルダーやほかのファイル システムは常に走査します。"
+                            )
                         } else {
-                            "读取 MFT 需要以管理员身份运行，现在总是遍历目录。"
+                            t!(
+                                "读取 MFT 需要以管理员身份运行，现在总是遍历目录。",
+                                "Reading the MFT requires administrator rights, so folders are always walked right now.",
+                                "MFT の読み取りには管理者権限が必要なため、現在は常にフォルダーを走査します。"
+                            )
                         };
-                        row(ui, "扫描方式", desc, |ui| {
+                        row(ui, t!("扫描方式", "Scan method", "スキャン方法"), desc, |ui| {
                             let labels = EngineChoice::ALL.map(|e| e.label());
                             let cur = EngineChoice::ALL
                                 .iter()
@@ -60,11 +74,35 @@ pub fn show(ui: &mut Ui, settings: &mut Settings, elevated: bool) {
                         });
                     });
 
-                    group(ui, "外观", |ui| {
+                    group(ui, t!("外观", "Appearance", "外観"), |ui| {
                         row(
                             ui,
-                            "主题",
-                            "跟随系统会随 Windows 的深浅色设置自动切换。",
+                            t!("语言", "Language", "言語"),
+                            t!(
+                                "跟随系统时使用 Windows 的显示语言。",
+                                "System uses the Windows display language.",
+                                "[システム] では Windows の表示言語を使います。"
+                            ),
+                            |ui| {
+                                let labels = Language::ALL.map(|l| l.label());
+                                let cur = Language::ALL
+                                    .iter()
+                                    .position(|&l| l == settings.language)
+                                    .unwrap_or(0);
+                                if let Some(i) = choice(ui, &labels, cur) {
+                                    settings.language = Language::ALL[i];
+                                }
+                            },
+                        );
+                        divider(ui);
+                        row(
+                            ui,
+                            t!("主题", "Theme", "テーマ"),
+                            t!(
+                                "跟随系统会随 Windows 的深浅色设置自动切换。",
+                                "System follows the Windows light or dark mode.",
+                                "[システム] では Windows のライト/ダーク設定に合わせて切り替わります。"
+                            ),
                             |ui| {
                                 let labels = ThemeChoice::ALL.map(|t| t.label());
                                 let cur = ThemeChoice::ALL
@@ -78,7 +116,7 @@ pub fn show(ui: &mut Ui, settings: &mut Settings, elevated: bool) {
                         );
                     });
 
-                    group(ui, "关于", |ui| {
+                    group(ui, t!("关于", "About", "バージョン情報"), |ui| {
                         ui.add_space(16.0);
                         ui.horizontal(|ui| {
                             widgets::brand_mark(ui, 56.0);
@@ -94,7 +132,10 @@ pub fn show(ui: &mut Ui, settings: &mut Settings, elevated: bool) {
                                         .color(p.text),
                                 );
                                 ui.label(
-                                    RichText::new(format!("版本 {}", env!("CARGO_PKG_VERSION")))
+                                    RichText::new({
+                                        let v = env!("CARGO_PKG_VERSION");
+                                        tf!("版本 {v}", "Version {v}", "バージョン {v}")
+                                    })
                                         .size(12.0)
                                         .color(p.muted),
                                 );

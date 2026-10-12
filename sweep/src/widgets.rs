@@ -175,14 +175,28 @@ pub fn search_box(ui: &mut Ui, text: &mut String, width: f32, hint: &str) -> Res
     resp
 }
 
+/// 按钮宽度（与 [`tool_button`]、[`card_button`] 一致）。
+fn pill_width(ui: &Ui, label: &str) -> f32 {
+    ui.painter()
+        .layout_no_wrap(
+            label.to_string(),
+            FontId::proportional(12.5),
+            Color32::WHITE,
+        )
+        .size()
+        .x
+        + 44.0
+}
+
+/// 一排按钮（间距 `gap`）的总宽度，用来决定放不放得下。
+pub fn buttons_width(ui: &Ui, labels: &[&str], gap: f32) -> f32 {
+    let w: f32 = labels.iter().map(|l| pill_width(ui, l)).sum();
+    w + gap * labels.len().saturating_sub(1) as f32
+}
+
 /// 图标 + 文字的按钮底板。
 fn pill(ui: &mut Ui, label: &str, enabled: bool) -> (Response, Rect) {
-    let galley = ui.painter().layout_no_wrap(
-        label.to_string(),
-        FontId::proportional(12.5),
-        Color32::WHITE,
-    );
-    let size = vec2(galley.size().x + 44.0, 32.0);
+    let size = vec2(pill_width(ui, label), 32.0);
     let sense = if enabled {
         Sense::click()
     } else {
