@@ -1,0 +1,51 @@
+name: Release
+
+# 推送 v* 标签（如 v0.1.0）时构建并发布。标签必须与 sweep/Cargo.toml 的版本一致。
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check version matches tag
+        shell: pwsh
+        run: |
+          $meta = cargo metadata --no-deps --format-version 1 | ConvertFrom-Json
+          $version = ($meta.packages | Where-Object name -eq 'sweep').version
+          if ("v$version" -ne '${{ github.ref_name }}') {
+            Write-Error "Tag ${{ github.ref_name }} does not match sweep version $version"
+            exit 1
+          }
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $name = 'sweep-${{ github.ref_name }}-windows-x64'
+          New-Item -ItemType Directory dist | Out-Null
+          Copy-Item target/release/sweep.exe "dist/$name.exe"
+          Compress-Archive -Path target/release/sweep.exe -DestinationPath "dist/$name.zip"
+          Get-ChildItem dist | ForEach-Object {
+            "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
+          } | Set-Content dist/SHA256SUMS.txt
+
+      - name: Publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create '${{ github.ref_name }}' (Get-ChildItem dist).FullName `
+            --title 'Sweep ${{ github.ref_name }}' --generate-notes
