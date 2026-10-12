@@ -359,6 +359,16 @@ pub fn scan(
     progress: &Progress,
     cancel: &AtomicBool,
 ) -> Result<Tree, String> {
+    scan_with_ids(root, by_alloc, progress, cancel).map(|(tree, _)| tree)
+}
+
+/// 同 [`scan`]，另外返回与节点一一对应的 MFT 记录号。
+pub(crate) fn scan_with_ids(
+    root: &str,
+    by_alloc: bool,
+    progress: &Progress,
+    cancel: &AtomicBool,
+) -> Result<(Tree, Vec<u64>), String> {
     let letter = root
         .chars()
         .next()
@@ -403,7 +413,7 @@ pub fn scan(
     let bitmap = layout.bitmap.as_deref();
     let next = AtomicUsize::new(0);
     let free_rx = Mutex::new(free_rx);
-    std::thread::scope(|s| -> Result<Tree, String> {
+    std::thread::scope(|s| -> Result<(Tree, Vec<u64>), String> {
         let readers: Vec<_> = (0..READERS)
             .map(|_| {
                 let (chunks, next, free_rx, chunk_tx) =
@@ -624,8 +634,11 @@ fn build(
     items: Receiver<Vec<Item>>,
     progress: &Progress,
     cancel: &AtomicBool,
-) -> Tree {
+) -> (Tree, Vec<u64>) {
     let mut tree = Tree::with_capacity(root, records as usize, records as usize * 16);
+    // 节点 → 记录号（硬链接的各个名字是同一条记录）。
+    let mut ids = Vec::with_capacity(records as usize);
+    ids.push(ROOT_RECORD);
     let mut pending = vec![Pending {
         parent: UNNAMED,
         seq: 0,
@@ -652,6 +665,7 @@ fn build(
             };
             let node = if *slot == NONE {
                 let n = tree.push(NONE, "", Entry::default());
+                ids.push(base);
                 pending.push(Pending {
                     parent: UNNAMED,
                     seq: 0,
@@ -721,6 +735,7 @@ fn build(
                             ..Default::default()
                         },
                     );
+                    ids.push(base);
                     pending.push(Pending {
                         parent,
                         seq: 0,
@@ -735,7 +750,7 @@ fn build(
         progress.bytes.store(bytes, Ordering::Relaxed);
     }
     if cancel.load(Ordering::Relaxed) {
-        return tree;
+        return (tree, ids);
     }
     progress.set_current(
         t!(
@@ -803,7 +818,7 @@ fn build(
     let _ = orphans;
     tree.by_alloc = by_alloc;
     tree.finish();
-    tree
+    (tree, ids)
 }
 
 #[cfg(test)]
@@ -1105,7 +1120,7 @@ mod tests {
         let (tx, rx) = sync_channel(1);
         tx.send(items).unwrap();
         drop(tx);
-        let t = build(
+        let (t, ids) = build(
             r"X:\",
             records,
             false,
@@ -1120,6 +1135,12 @@ mod tests {
         let b = t.find(r"X:\b.txt").unwrap();
         assert!(t.node(b).has(flags::HARDLINK));
         assert_eq!(t.node(b).size, 0);
+        assert_eq!(ids.len(), t.len());
+        assert_eq!(ids[t.root as usize], ROOT_RECORD);
+        assert_eq!(
+            ids[a as usize], ids[b as usize],
+            "硬链接的各个名字是同一条记录"
+        );
         assert_eq!(t.node(t.find(r"X:\docs\extra.bin").unwrap()).size, 3);
         assert_eq!(t.find(r"X:\docs\stale.txt"), None);
         assert_eq!(t.find(r"X:\gone.txt"), None);

@@ -13,9 +13,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use windows::Win32::Foundation::{CloseHandle, ERROR_ACCESS_DENIED, HANDLE};
 use windows::Win32::Storage::FileSystem::{
-    CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_ID_BOTH_DIR_INFO, FILE_LIST_DIRECTORY,
-    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FileIdBothDirectoryInfo,
-    GetFileInformationByHandleEx, OPEN_EXISTING,
+    CreateFileW, FILE_BASIC_INFO, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+    FILE_ID_BOTH_DIR_INFO, FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
+    FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_STANDARD_INFO, FileBasicInfo, FileIdBothDirectoryInfo,
+    FileStandardInfo, GetFileInformationByHandleEx, OPEN_EXISTING,
 };
 use windows::core::PCWSTR;
 
@@ -34,22 +35,76 @@ const BUF_WORDS: usize = 64 * 1024 / 8;
 const SHARDS: usize = 64;
 
 struct Ctx<'a> {
-    tree: Mutex<Tree>,
+    /// 树，以及与节点一一对应的文件 ID（NTFS 上是 MFT 记录号，见 [`record_of`]）。
+    tree: Mutex<(Tree, Vec<u64>)>,
     seen: Vec<Mutex<HashSet<u64>>>,
     progress: &'a Progress,
     cancel: &'a AtomicBool,
 }
 
 /// 一个目录项（还没放进树里）。
-struct Raw {
-    name: String,
-    attrs: u32,
-    size: u64,
-    alloc: u64,
-    mtime: u64,
-    id: u64,
+pub(crate) struct Raw {
+    pub name: String,
+    pub attrs: u32,
+    pub size: u64,
+    pub alloc: u64,
+    pub mtime: u64,
+    pub id: u64,
     /// 重解析点的标记（目录项里的 EaSize 字段对重解析点存放的是它）。
-    tag: u32,
+    pub tag: u32,
+}
+
+impl Raw {
+    pub fn is_dir(&self) -> bool {
+        self.attrs & FA_DIRECTORY != 0
+    }
+
+    /// 遍历时是否进入：只跳过"名称代理"类的重解析点（目录联接、符号链接），它们指向别处的内容；
+    /// OneDrive 等云文件占位目录也是重解析点，但内容就在这里，要进入。
+    pub fn enter(&self) -> bool {
+        self.is_dir() && (self.attrs & FA_REPARSE == 0 || self.tag & NAME_SURROGATE == 0)
+    }
+
+    /// 节点标记；`dup` 为硬链接的非首个名字。
+    pub fn flags(&self, dup: bool) -> u8 {
+        let mut f = 0u8;
+        if self.is_dir() {
+            f |= flags::DIR;
+        }
+        if self.attrs & FA_HIDDEN != 0 {
+            f |= flags::HIDDEN;
+        }
+        if self.attrs & FA_SYSTEM != 0 {
+            f |= flags::SYSTEM;
+        }
+        if self.attrs & FA_REPARSE != 0 {
+            f |= flags::REPARSE;
+        }
+        if dup {
+            f |= flags::HARDLINK;
+        }
+        f
+    }
+
+    /// 放进树里的参数：目录和硬链接的非首个名字大小记为 0。
+    pub fn entry(&self, dup: bool) -> Entry {
+        let (size, alloc) = if self.is_dir() || dup {
+            (0, 0)
+        } else {
+            (self.size, self.alloc)
+        };
+        Entry {
+            size,
+            alloc,
+            mtime: self.mtime,
+            flags: self.flags(dup),
+        }
+    }
+}
+
+/// 文件 ID 里的 MFT 记录号（去掉高 16 位的序列号）。同一文件的各个硬链接记录号相同。
+pub fn record_of(id: u64) -> u64 {
+    id & 0x0000_FFFF_FFFF_FFFF
 }
 
 /// 扫描 `root` 文件夹（如 `C:\` 或 `D:\data`）。
@@ -60,6 +115,19 @@ pub fn scan(
     progress: &Progress,
     cancel: &AtomicBool,
 ) -> Result<Tree, String> {
+    let (mut tree, _) = scan_raw(root, progress, cancel)?;
+    progress.set_current(t!("正在汇总…", "Totaling…", "集計しています…").into());
+    tree.by_alloc = by_alloc;
+    tree.finish();
+    Ok(tree)
+}
+
+/// 扫描但不汇总（不调用 [`Tree::finish`]），同时返回各节点的 MFT 记录号（根为 0）。
+pub(crate) fn scan_raw(
+    root: &str,
+    progress: &Progress,
+    cancel: &AtomicBool,
+) -> Result<(Tree, Vec<u64>), String> {
     let meta = std::fs::metadata(root).map_err(|e| {
         tf!(
             "无法访问 {root}：{e}",
@@ -83,7 +151,7 @@ pub fn scan(
         .build()
         .map_err(|e| e.to_string())?;
     let ctx = Ctx {
-        tree: Mutex::new(Tree::new(root)),
+        tree: Mutex::new((Tree::new(root), vec![0])),
         seen: (0..SHARDS).map(|_| Mutex::new(HashSet::new())).collect(),
         progress,
         cancel,
@@ -93,15 +161,11 @@ pub fn scan(
     if cancel.load(Ordering::Relaxed) {
         return Err(crate::cancelled());
     }
-    progress.set_current(t!("正在汇总…", "Totaling…", "集計しています…").into());
-    let mut tree = ctx.tree.into_inner().unwrap();
-    tree.by_alloc = by_alloc;
-    tree.finish();
-    Ok(tree)
+    Ok(ctx.tree.into_inner().unwrap())
 }
 
 /// 转成带 `\\?\` 前缀的宽字符路径，绕过 MAX_PATH。
-fn long_path(path: &str) -> Vec<u16> {
+pub(crate) fn long_path(path: &str) -> Vec<u16> {
     let p = if let Some(unc) = path.strip_prefix(r"\\") {
         if unc.starts_with(r"?\") {
             path.to_string()
@@ -114,7 +178,7 @@ fn long_path(path: &str) -> Vec<u16> {
     p.encode_utf16().collect()
 }
 
-fn join(dir: &[u16], name: &str) -> Vec<u16> {
+pub(crate) fn join(dir: &[u16], name: &str) -> Vec<u16> {
     let mut p = Vec::with_capacity(dir.len() + name.len() + 1);
     p.extend_from_slice(dir);
     if p.last() != Some(&(b'\\' as u16)) {
@@ -129,7 +193,7 @@ thread_local! {
 }
 
 /// 列出一个目录。打不开时返回 Err(是否因为权限不足)。
-fn list(path: &[u16]) -> Result<Vec<Raw>, bool> {
+pub(crate) fn list(path: &[u16]) -> Result<Vec<Raw>, bool> {
     let mut z = path.to_vec();
     z.push(0);
     let handle = unsafe {
@@ -150,6 +214,52 @@ fn list(path: &[u16]) -> Result<Vec<Raw>, bool> {
         let _ = CloseHandle(handle);
     }
     Ok(out)
+}
+
+/// 打开文件查询实际的 (大小, 占用, 修改时间)。目录列表里的值来自目录索引，文件被长时间打开、
+/// 持续写入时（日志等）可能停留在几小时前；打开文件取到的是当前值。不进入重解析点，
+/// 云文件占位符不会因此被下载。
+pub(crate) fn file_info(path: &[u16]) -> Option<(u64, u64, u64)> {
+    let mut z = path.to_vec();
+    z.push(0);
+    let handle = unsafe {
+        CreateFileW(
+            PCWSTR(z.as_ptr()),
+            FILE_READ_ATTRIBUTES.0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            None,
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+            None,
+        )
+    }
+    .ok()?;
+    let mut std_info = FILE_STANDARD_INFO::default();
+    let mut basic = FILE_BASIC_INFO::default();
+    let ok = unsafe {
+        GetFileInformationByHandleEx(
+            handle,
+            FileStandardInfo,
+            (&mut std_info as *mut FILE_STANDARD_INFO).cast(),
+            size_of::<FILE_STANDARD_INFO>() as u32,
+        )
+        .is_ok()
+            && GetFileInformationByHandleEx(
+                handle,
+                FileBasicInfo,
+                (&mut basic as *mut FILE_BASIC_INFO).cast(),
+                size_of::<FILE_BASIC_INFO>() as u32,
+            )
+            .is_ok()
+    };
+    unsafe {
+        let _ = CloseHandle(handle);
+    }
+    ok.then_some((
+        std_info.EndOfFile as u64,
+        std_info.AllocationSize as u64,
+        basic.LastWriteTime as u64,
+    ))
 }
 
 fn read_entries(handle: HANDLE, buf: &mut [u64]) -> Vec<Raw> {
@@ -212,7 +322,7 @@ fn visit<'s>(
         Ok(e) => e,
         Err(denied) => {
             if denied {
-                ctx.tree.lock().unwrap().nodes[node as usize].flags |= flags::DENIED;
+                ctx.tree.lock().unwrap().0.nodes[node as usize].flags |= flags::DENIED;
             }
             return;
         }
@@ -221,7 +331,7 @@ fn visit<'s>(
     let dup: Vec<bool> = entries
         .iter()
         .map(|e| {
-            e.attrs & FA_DIRECTORY == 0
+            !e.is_dir()
                 && e.id != 0
                 && !ctx.seen[(e.id as usize).wrapping_mul(0x9E37_79B9) % SHARDS]
                     .lock()
@@ -233,50 +343,20 @@ fn visit<'s>(
     let mut subdirs = Vec::new();
     let (mut files, mut dirs, mut bytes) = (0u64, 0u64, 0u64);
     {
-        let mut tree = ctx.tree.lock().unwrap();
+        let mut guard = ctx.tree.lock().unwrap();
+        let (tree, ids) = &mut *guard;
         for (e, dup) in entries.iter().zip(dup) {
-            let is_dir = e.attrs & FA_DIRECTORY != 0;
-            let mut f = 0u8;
-            if is_dir {
-                f |= flags::DIR;
-            }
-            if e.attrs & FA_HIDDEN != 0 {
-                f |= flags::HIDDEN;
-            }
-            if e.attrs & FA_SYSTEM != 0 {
-                f |= flags::SYSTEM;
-            }
-            if e.attrs & FA_REPARSE != 0 {
-                f |= flags::REPARSE;
-            }
-            if dup {
-                f |= flags::HARDLINK;
-            }
-            let (size, alloc) = if is_dir || dup {
-                (0, 0)
-            } else {
-                (e.size, e.alloc)
-            };
-            let child = tree.push(
-                node,
-                &e.name,
-                Entry {
-                    size,
-                    alloc,
-                    mtime: e.mtime,
-                    flags: f,
-                },
-            );
-            if is_dir {
+            let entry = e.entry(dup);
+            let child = tree.push(node, &e.name, entry);
+            ids.push(record_of(e.id));
+            if e.is_dir() {
                 dirs += 1;
-                // 只跳过"名称代理"类的重解析点（目录联接、符号链接），它们指向别处的内容；
-                // OneDrive 等云文件占位目录也是重解析点，但内容就在这里，要进入。
-                if e.attrs & FA_REPARSE == 0 || e.tag & NAME_SURROGATE == 0 {
+                if e.enter() {
                     subdirs.push((child, e.name.as_str()));
                 }
             } else {
                 files += 1;
-                bytes += size;
+                bytes += entry.size;
             }
         }
     }
