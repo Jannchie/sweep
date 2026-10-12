@@ -15,6 +15,7 @@ Compared with WinDirStat:
 - Run as administrator, Sweep reads the NTFS master file table (MFT) directly instead of opening folders one by one. On a C: drive on an NVMe SSD (about 4.7 million files and folders, 730 GiB), reading the MFT took 5.2 s (8.9 s on the first run); Sweep's own multi-threaded folder walk took 64 s on the same volume.
 - Scanning, file type statistics, treemap layout and cleanup suggestions run on background threads, so the window stays responsive; during a folder walk, the sizes of the top-level folders update live.
 - After a deletion or rescan, only the affected part of the tree is updated; there is no need to rescan the drive.
+- Incremental scans: scanning the same NTFS drive again loads the previous result and updates only the folders that changed since, as recorded in the USN change journal. On the C: drive above this takes 1.6 s instead of 5.5 s; when the journal no longer covers the gap, a full scan runs instead.
 - Items are ranked by size on disk by default, so cloud placeholders, compressed and sparse files count as the space you get back by deleting them; hard links are counted once.
 - The Clean up page lists common places to reclaim space: temporary files, browser caches, npm / Yarn / pnpm / pip / uv / Cargo / NuGet / Gradle / Hugging Face caches, node_modules and the Recycle Bin.
 - Near-zero CPU while idle: the window repaints only when data or input changes.
