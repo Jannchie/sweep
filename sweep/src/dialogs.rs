@@ -493,6 +493,118 @@ fn dialog_frame(p: &Palette) -> Frame {
         })
 }
 
+/// 卸载确认：列出要卸载的程序与各自的卸载方式，说明静默卸载与卸载向导的区别。
+pub fn confirm_uninstall(
+    ctx: &egui::Context,
+    list: &[crate::apps::InstalledApp],
+    elevated: bool,
+) -> Option<Decision> {
+    let p = Palette::of(ctx);
+    modal(ctx, "uninstall", 460.0, |ui| {
+        let mut decision = None;
+        let title = match list {
+            [a] => {
+                let name = &a.name;
+                tf!(
+                    "卸载 {name}？",
+                    "Uninstall {name}?",
+                    "{name} をアンインストールしますか?"
+                )
+            }
+            _ => {
+                let n = list.len();
+                tf!(
+                    "卸载 {n} 个应用？",
+                    "Uninstall {n} apps?",
+                    "{n} 個のアプリをアンインストールしますか?"
+                )
+            }
+        };
+        danger_title(ui, &title);
+        ui.add_space(8.0);
+        Frame::NONE
+            .fill(p.bg)
+            .corner_radius(CornerRadius::same(8))
+            .inner_margin(Margin::symmetric(12, 8))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                egui::ScrollArea::vertical()
+                    .max_height(180.0)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        for a in list {
+                            ui.horizontal(|ui| {
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(&a.name).size(13.0).color(p.text),
+                                    )
+                                    .truncate(),
+                                );
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    let color = if a.method.quick() { p.accent } else { p.faint };
+                                    widgets::status_chip(ui, a.method.label(), color);
+                                });
+                            });
+                        }
+                    });
+            });
+        ui.add_space(8.0);
+        let quick = list.iter().filter(|a| a.method.quick()).count();
+        let wizard = list.len() - quick;
+        let mut notes = Vec::new();
+        if quick > 0 {
+            notes.push(t!(
+                "快速卸载在后台静默进行，不显示程序自己的卸载界面，也不会询问是否保留设置或个人数据。",
+                "Quick removal runs silently in the background: the app's own uninstaller UI isn't shown, and it won't ask whether to keep settings or personal data.",
+                "クイック削除はバックグラウンドで自動的に実行されます。アプリ独自のアンインストール画面は表示されず、設定や個人データを残すかどうかも確認されません。"
+            ));
+        }
+        if wizard > 0 {
+            notes.push(t!(
+                "标为“卸载向导”的会打开程序自己的卸载向导，需要在向导里完成。",
+                "Apps marked “Wizard” open their own uninstall wizard, which you need to finish.",
+                "「ウィザード」と表示されたアプリは独自のアンインストール ウィザードを開くので、ウィザードで操作を完了してください。"
+            ));
+        }
+        if !elevated && list.iter().any(|a| a.machine) {
+            notes.push(t!(
+                "为所有用户安装的程序需要管理员权限，Windows 会逐个请求确认。",
+                "Apps installed for all users need administrator permission; Windows will ask for each one.",
+                "すべてのユーザー向けにインストールされたアプリには管理者権限が必要で、Windows が 1 つずつ確認を求めます。"
+            ));
+        }
+        for n in notes {
+            ui.label(RichText::new(n).size(12.5).color(p.muted));
+            ui.add_space(4.0);
+        }
+        ui.add_space(10.0);
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            if button(
+                ui,
+                t!("卸载", "Uninstall", "アンインストール"),
+                Kind::Danger,
+                true,
+            )
+            .clicked()
+            {
+                decision = Some(Decision::Confirm);
+            }
+            if button(
+                ui,
+                t!("取消", "Cancel", "キャンセル"),
+                Kind::Secondary,
+                true,
+            )
+            .clicked()
+            {
+                decision = Some(Decision::Cancel);
+            }
+        });
+        decision
+    })
+}
+
 /// 通用的危险操作确认框（清空回收站等）。
 pub fn confirm(
     ctx: &egui::Context,

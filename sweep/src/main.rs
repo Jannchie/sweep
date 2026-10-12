@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod analyze;
+mod apps;
+mod apps_view;
 mod brand_art;
 mod cleanup;
 mod cleanup_view;
@@ -77,6 +79,7 @@ enum View {
     Disks,
     Analyze,
     Cleanup,
+    Apps,
     Settings,
 }
 
@@ -145,6 +148,7 @@ enum Modal {
     Delete(DeleteRequest),
     EmptyRecycleBin(u64),
     Update(Arc<update::Release>),
+    Uninstall(Vec<apps::InstalledApp>),
 }
 
 /// 后台任务的结果。
@@ -196,6 +200,7 @@ struct App {
     last_view: View,
     /// 增量扫描缓存占用的空间；None 表示需要重新统计（打开设置页、扫描、清除后）。
     cache_usage: Option<u64>,
+    apps: apps_view::AppsPage,
     updater: update::Updater,
     /// 本帧开始时读到的更新状态。
     update: update::Status,
@@ -255,6 +260,7 @@ impl App {
             passes: VecDeque::new(),
             last_view: View::Disks,
             cache_usage: None,
+            apps: apps_view::AppsPage::default(),
             updater,
             update: update::Status::default(),
             update_announced: None,
@@ -649,6 +655,7 @@ impl App {
                 });
             }
             Modal::Update(_) => {}
+            Modal::Uninstall(list) => self.apps.start_uninstall(ctx, list, self.elevated),
             Modal::EmptyRecycleBin(_) => {
                 self.spawn(ctx, || Job::RecycleEmptied(os::empty_recycle_bin()));
             }
@@ -972,6 +979,7 @@ impl App {
                 Icon::Broom,
                 t!("清理", "Clean up", "クリーンアップ"),
             ),
+            (View::Apps, Icon::Package, t!("应用", "Apps", "アプリ")),
         ] {
             let resp = tab(ui, self.view == view, glyph, label);
             holes.push(resp.rect);
@@ -1230,6 +1238,35 @@ impl eframe::App for App {
         self.poll_scan(&ctx);
         self.poll_jobs(&ctx);
         self.poll_update(&ctx);
+        self.apps
+            .poll(&ctx, self.settings.basis == Basis::Allocated);
+        if let Some((ok, failed)) = self.apps.take_finished() {
+            let (ok_n, failed_n) = (fmt_count(ok as u64), fmt_count(failed as u64));
+            if failed == 0 {
+                self.notify_ok(
+                    tf!(
+                        "已卸载 {ok_n} 个应用",
+                        "Uninstalled {ok_n} apps",
+                        "{ok_n} 個のアプリをアンインストールしました"
+                    ),
+                    None,
+                );
+            } else {
+                self.notify_err(
+                    tf!(
+                        "{failed_n} 个应用未能卸载",
+                        "{failed_n} apps weren't uninstalled",
+                        "{failed_n} 個のアプリをアンインストールできませんでした"
+                    ),
+                    Some(tf!(
+                        "已卸载 {ok_n} 个。把鼠标停在标为“失败”的行上可查看原因。",
+                        "{ok_n} uninstalled. Hover a row marked “Failed” to see why.",
+                        "{ok_n} 個はアンインストールしました。「失敗」と表示された行にマウスを合わせると理由を確認できます。"
+                    )),
+                );
+            }
+            self.after_space_change(&ctx);
+        }
         self.icons.poll(&ctx);
         self.treemap.poll(&ctx);
         if let Some(d) = &mut self.doc {
@@ -1330,6 +1367,14 @@ impl eframe::App for App {
                     .inner;
                 actions.extend(a);
             }
+            View::Apps => {
+                let a = central
+                    .show(ui, |ui| self.apps.show(ui, &mut self.icons))
+                    .inner;
+                if let Some(apps_view::AppsAction::Uninstall(list)) = a {
+                    self.modal = Some(Modal::Uninstall(list));
+                }
+            }
             View::Settings => {
                 let before = self.settings.clone();
                 let action = central
@@ -1424,6 +1469,7 @@ impl eframe::App for App {
                     None
                 }
                 Modal::Delete(req) => dialogs::confirm_delete(&ctx, req),
+                Modal::Uninstall(list) => dialogs::confirm_uninstall(&ctx, list, self.elevated),
                 Modal::EmptyRecycleBin(size) => dialogs::confirm(
                     &ctx,
                     "recycle",
@@ -1467,6 +1513,12 @@ impl eframe::App for App {
         let key_action = match self.view {
             View::Analyze if idle => self.keyboard(&ctx),
             View::Cleanup if idle => self.selection_keys(&ctx, List::Largest),
+            View::Apps if idle => {
+                if let Some(apps_view::AppsAction::Uninstall(list)) = self.apps.keys(&ctx) {
+                    self.modal = Some(Modal::Uninstall(list));
+                }
+                None
+            }
             _ => None,
         };
         actions.extend(key_action);

@@ -1,5 +1,5 @@
 //! 文件类型图标：后台线程向 Shell 按扩展名要图标（不读文件本身，所以很快），UI 线程缓存成纹理。
-//! 同一扩展名只取一次；文件夹用一个共用的键。
+//! 同一扩展名只取一次；文件夹用一个共用的键。程序图标（[`app_key`]）从 exe / ico 文件本身读取。
 
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -19,6 +19,11 @@ use windows::core::PCWSTR;
 
 /// 文件夹图标的键（扩展名里不会出现尖括号）。
 pub const FOLDER: &str = "<dir>";
+
+/// 程序图标的键：注册表 DisplayIcon 的 `路径,序号`。
+pub fn app_key(icon: &str) -> String {
+    format!("@{icon}")
+}
 
 /// 后台取图标的结果：(键, (边长, RGBA))。
 type Loaded = (String, Option<(usize, Vec<u8>)>);
@@ -96,6 +101,9 @@ impl FileIcons {
 }
 
 fn shell_icon(key: &str, large: bool) -> Option<(usize, Vec<u8>)> {
+    if let Some(spec) = key.strip_prefix('@') {
+        return file_icon(spec, large);
+    }
     let (name, attrs) = if key == FOLDER {
         ("folder".to_string(), FILE_ATTRIBUTE_DIRECTORY)
     } else if key.is_empty() {
@@ -125,6 +133,49 @@ fn shell_icon(key: &str, large: bool) -> Option<(usize, Vec<u8>)> {
     let out = to_rgba(info.hIcon, if large { 32 } else { 16 });
     unsafe {
         let _ = DestroyIcon(info.hIcon);
+    }
+    out
+}
+
+/// 从 exe / dll / ico 里取图标。`spec` 是 `路径` 或 `路径,序号`（负数是资源 ID）。
+fn file_icon(spec: &str, large: bool) -> Option<(usize, Vec<u8>)> {
+    let spec = spec.trim().trim_matches('"');
+    let (path, index) = match spec.rsplit_once(',') {
+        Some((p, i)) if i.trim().parse::<i32>().is_ok() => {
+            (p.trim().trim_matches('"'), i.trim().parse().unwrap())
+        }
+        _ => (spec, 0),
+    };
+    let w = crate::os::wide(path);
+    let (mut big, mut small) = (HICON::default(), HICON::default());
+    let n = unsafe {
+        windows::Win32::UI::Shell::ExtractIconExW(
+            PCWSTR(w.as_ptr()),
+            index,
+            Some(&mut big),
+            Some(&mut small),
+            1,
+        )
+    };
+    if n == 0 || n == u32::MAX {
+        return None;
+    }
+    let (icon, other, size) = if large {
+        (big, small, 32)
+    } else {
+        (small, big, 16)
+    };
+    let out = if icon.is_invalid() {
+        None
+    } else {
+        to_rgba(icon, size)
+    };
+    unsafe {
+        for h in [icon, other] {
+            if !h.is_invalid() {
+                let _ = DestroyIcon(h);
+            }
+        }
     }
     out
 }
