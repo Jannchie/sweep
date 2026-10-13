@@ -1,4 +1,5 @@
 //! 应用页：已安装的程序列表（大小、安装日期、卸载方式），多选后快速卸载。
+//! 能静默卸载的直接卸载，不弹出卸载向导；其余打开程序自己的卸载向导（见 [`crate::apps`]）。
 //!
 //! 列表、大小测量、卸载都在后台线程进行，结果经通道送回，[`AppsPage::poll`] 每帧收取。
 
@@ -14,7 +15,7 @@ use sweep_scan::{t, tf};
 use crate::apps::{self, InstalledApp};
 use crate::file_icons::{self, FileIcons};
 use crate::icons_gen::Icon;
-use crate::theme::{self, Palette, semibold};
+use crate::theme::{self, Palette};
 use crate::{fmt_bytes, fmt_count, widgets};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -100,6 +101,45 @@ impl AppsPage {
             ctx.request_repaint();
         });
         self.load_rx = Some(rx);
+    }
+
+    /// 状态栏的文字：总数、测量进度，或选中项的个数与大小合计。
+    pub fn status_line(&self) -> String {
+        if !self.loaded {
+            return t!(
+                "正在读取已安装的程序…",
+                "Reading installed apps…",
+                "インストール済みのアプリを読み込んでいます…"
+            )
+            .into();
+        }
+        let chosen: Vec<&InstalledApp> = self
+            .apps
+            .iter()
+            .filter(|a| self.selected.contains(&a.id))
+            .collect();
+        if !chosen.is_empty() {
+            let n = fmt_count(chosen.len() as u64);
+            let size = fmt_bytes(chosen.iter().filter_map(|a| self.size_of(a).0).sum());
+            return tf!(
+                "已选 {n} 个 · {size}",
+                "{n} selected · {size}",
+                "{n} 個を選択 · {size}"
+            );
+        }
+        let total = self.apps.len();
+        let n = fmt_count(total as u64);
+        let measured = self.sizes.len().min(total);
+        let pending = self.apps.iter().filter(|a| !a.folders.is_empty()).count();
+        if measured < pending && self.size_rx.is_some() {
+            tf!(
+                "{n} 个应用 · 正在测量大小 {measured}/{pending}",
+                "{n} apps · measuring sizes {measured}/{pending}",
+                "{n} 個のアプリ · サイズを測定中 {measured}/{pending}"
+            )
+        } else {
+            tf!("{n} 个应用", "{n} apps", "{n} 個のアプリ")
+        }
     }
 
     pub fn busy(&self) -> bool {
@@ -317,23 +357,7 @@ impl AppsPage {
         }
         let p = Palette::of(ui.ctx());
         let mut action = None;
-        ui.add_space(8.0);
-        ui.label(
-            RichText::new(t!("应用", "Apps", "アプリ"))
-                .size(22.0)
-                .family(semibold())
-                .color(p.text),
-        );
-        ui.label(
-            RichText::new(t!(
-                "已安装的程序与商店应用。能静默卸载的直接卸载，不弹出卸载向导；其余打开程序自己的卸载向导。",
-                "Installed programs and Store apps. Apps that support it are removed silently without their uninstall wizard; the rest open their own wizard.",
-                "インストール済みのプログラムとストア アプリです。サイレント アンインストールに対応したものはウィザードを表示せずに削除し、それ以外は各アプリのウィザードを開きます。"
-            ))
-            .size(13.0)
-            .color(p.muted),
-        );
-        ui.add_space(12.0);
+        ui.add_space(4.0);
 
         let rows = self.rows();
         let chosen = self.selected_apps();
@@ -349,29 +373,6 @@ impl AppsPage {
                     "名前または発行元で検索"
                 ),
             );
-            let total = self.apps.len();
-            let summary = if !self.loaded {
-                t!(
-                    "正在读取已安装的程序…",
-                    "Reading installed apps…",
-                    "インストール済みのアプリを読み込んでいます…"
-                )
-                .to_string()
-            } else {
-                let n = fmt_count(total as u64);
-                let measured = self.sizes.len().min(total);
-                let pending = self.apps.iter().filter(|a| !a.folders.is_empty()).count();
-                if measured < pending && self.size_rx.is_some() {
-                    tf!(
-                        "共 {n} 个 · 正在测量大小 {measured}/{pending}",
-                        "{n} apps · measuring sizes {measured}/{pending}",
-                        "{n} 個 · サイズを測定中 {measured}/{pending}"
-                    )
-                } else {
-                    tf!("共 {n} 个", "{n} apps", "{n} 個")
-                }
-            };
-            ui.label(RichText::new(summary).size(12.0).color(p.faint));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let label = if chosen.is_empty() {
                     t!("卸载", "Uninstall", "アンインストール").to_string()
@@ -510,24 +511,17 @@ impl AppsPage {
                         widgets::right_label(ui, text);
                     });
                     row.col(|ui| {
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| match status {
-                            Some(Status::Queued) => {
-                                widgets::status_chip(ui, t!("等待中", "Queued", "待機中"), p.faint)
+                        // 纯文字：进行中的状态用正文色，失败用警示色，平时的卸载方式用次要色。
+                        let (label, color) = match status {
+                            Some(Status::Queued) => (t!("等待中", "Queued", "待機中"), p.muted),
+                            Some(Status::Running) => {
+                                (t!("正在卸载…", "Removing…", "削除中…"), p.text)
                             }
-                            Some(Status::Running) => widgets::status_chip(
-                                ui,
-                                t!("正在卸载", "Removing", "削除中"),
-                                p.accent,
-                            ),
-                            Some(Status::Failed(e)) => {
-                                widgets::status_chip(ui, t!("失败", "Failed", "失敗"), p.danger);
-                                ui.response().on_hover_text(e.as_str());
-                            }
-                            None => {
-                                let color = if a.method.quick() { p.accent } else { p.faint };
-                                widgets::status_chip(ui, a.method.label(), color);
-                            }
-                        });
+                            Some(Status::Failed(_)) => (t!("失败", "Failed", "失敗"), p.danger),
+                            None if a.method.quick() => (a.method.label(), p.muted),
+                            None => (a.method.label(), p.faint),
+                        };
+                        widgets::right_label(ui, RichText::new(label).size(12.0).color(color));
                     });
                     let resp = row.response();
                     if resp.clicked() {

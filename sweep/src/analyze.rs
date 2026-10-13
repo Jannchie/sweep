@@ -1,4 +1,5 @@
-//! 分析页：KPI 卡片、面包屑与工具栏，下面是目录树（虚拟化的表格）、文件类型面板和矩形树图。
+//! 分析页：面包屑与工具栏，下面是目录树（虚拟化的表格）、文件类型面板和矩形树图。
+//! 合计、选中项的大小在底部状态栏。
 
 use std::sync::Arc;
 
@@ -28,8 +29,7 @@ pub fn show(
     deleting: bool,
 ) -> Vec<Action> {
     let mut actions = Vec::new();
-    kpis(ui, doc);
-    ui.add_space(12.0);
+    ui.add_space(4.0);
     toolbar(ui, doc, focus_search, deleting, &mut actions);
     ui.add_space(10.0);
 
@@ -59,92 +59,6 @@ pub fn show(
         .frame(Frame::NONE.fill(p.bg))
         .show(ui, |ui| tree_table(ui, doc, icons, &mut actions));
     actions
-}
-
-fn kpis(ui: &mut Ui, doc: &mut Doc) {
-    let p = Palette::of(ui.ctx());
-    let summary = doc.summary();
-    let t = &doc.tree;
-    let r = t.node(t.root);
-    let gap = 12.0;
-    let w = ((ui.available_width() - gap * 3.0) / 4.0).floor();
-    let basis = if t.by_alloc {
-        t!("占用空间", "Size on disk", "ディスク上のサイズ")
-    } else {
-        t!("文件大小", "Size", "サイズ")
-    };
-    let other = if t.by_alloc {
-        let b = fmt_bytes(r.size);
-        tf!("文件大小 {b}", "Size {b}", "サイズ {b}")
-    } else {
-        let b = fmt_bytes(r.alloc);
-        tf!("占用 {b}", "On disk {b}", "ディスク上 {b}")
-    };
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = gap;
-        widgets::kpi(
-            ui,
-            w,
-            76.0,
-            Icon::HardDrive,
-            basis,
-            &fmt_bytes(t.value(t.root)),
-            &other,
-            p.accent,
-        );
-        widgets::kpi(
-            ui,
-            w,
-            76.0,
-            Icon::Files,
-            t!("文件", "Files", "ファイル"),
-            &fmt_count(r.files as u64),
-            &{
-                let n = fmt_count(r.dirs as u64);
-                tf!("{n} 个文件夹", "{n} folders", "フォルダー {n} 個")
-            },
-            p.accent,
-        );
-        // 选中一项时标题显示名字，多项时显示项数；大小是规范化后的合计（不重复计算）。
-        let title = match (summary.count, doc.selection.single()) {
-            (0, _) => {
-                let none = t!("未选择", "None", "なし");
-                tf!("选中 · {none}", "Selected · {none}", "選択中 · {none}")
-            }
-            (_, Some(s)) => {
-                let name = crate::short_name(t, s);
-                tf!("选中 · {name}", "Selected · {name}", "選択中 · {name}")
-            }
-            (n, None) => {
-                let c = fmt_count(n as u64);
-                tf!("选中 {c} 项", "{c} items selected", "{c} 項目を選択")
-            }
-        };
-        let (size, share) = if summary.count == 0 {
-            ("—".to_string(), String::new())
-        } else {
-            let share = pct(summary.total, t.value(t.root));
-            (
-                fmt_bytes(summary.total),
-                tf!(
-                    "占全部 {share:.1}%",
-                    "{share:.1}% of total",
-                    "全体の {share:.1}%"
-                ),
-            )
-        };
-        widgets::kpi(ui, w, 76.0, Icon::Target, &title, &size, &share, p.accent);
-        widgets::kpi(
-            ui,
-            w,
-            76.0,
-            Icon::Clock,
-            t!("扫描用时", "Scan time", "スキャン時間"),
-            &crate::fmt_duration(doc.elapsed),
-            doc.engine.label(),
-            p.accent,
-        );
-    });
 }
 
 fn pct(part: u64, whole: u64) -> f64 {
@@ -568,7 +482,7 @@ fn share_cell(ui: &mut Ui, part: u64, whole: u64) {
         pos2(rect.left(), rect.center().y - 3.0),
         pos2(rect.left() + 72.0, rect.center().y + 3.0),
     );
-    widgets::meter(ui.painter(), bar, frac, p.accent, p.track);
+    widgets::meter(ui.painter(), bar, frac, p.faint, p.track);
     ui.painter().text(
         pos2(rect.right(), rect.center().y),
         Align2::RIGHT_CENTER,

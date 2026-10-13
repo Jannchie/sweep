@@ -22,7 +22,7 @@ pub struct Palette {
     /// 标签文字（accent 色调的浅底标签上）。
     pub chip: Color32,
     pub danger: Color32,
-    /// 选中行底色的 accent 透明度。
+    /// 选中行底色：正文色的透明度。
     pub selection_alpha: f32,
     /// 标签底色的 accent 透明度。
     pub chip_alpha: f32,
@@ -42,7 +42,7 @@ const DARK: Palette = Palette {
     accent: Color32::from_rgb(0xff, 0x8a, 0x3d),
     chip: Color32::from_rgb(0xff, 0xcb, 0xa6),   // ≥ 10:1
     danger: Color32::from_rgb(0xff, 0xb4, 0xb4), // ≥ 7.4:1（只出现在按钮上）
-    selection_alpha: 0.14,
+    selection_alpha: 0.10,
     chip_alpha: 0.12,
 };
 
@@ -58,7 +58,7 @@ const LIGHT: Palette = Palette {
     accent: Color32::from_rgb(0xea, 0x58, 0x0c),
     chip: Color32::from_rgb(0x7c, 0x2d, 0x12),   // ≥ 8.4:1
     danger: Color32::from_rgb(0x8a, 0x18, 0x18), // ≥ 7.7:1（只出现在按钮上）
-    selection_alpha: 0.09,
+    selection_alpha: 0.07,
     chip_alpha: 0.09,
 };
 
@@ -182,7 +182,8 @@ fn visuals(p: &Palette, dark: bool) -> Visuals {
     v.window_shadow = v.popup_shadow;
     v.weak_text_color = Some(p.muted);
     v.hyperlink_color = p.accent;
-    v.selection.bg_fill = p.accent.gamma_multiply(p.selection_alpha);
+    // 选中行用中性的浅灰（与资源管理器一致），不染强调色。
+    v.selection.bg_fill = p.text.gamma_multiply(p.selection_alpha);
     // 表格选中行用这个颜色画文字，保持正文色即可。
     v.selection.stroke = Stroke::new(1.0, p.text);
     v.striped = false;

@@ -1100,19 +1100,40 @@ impl App {
     fn footer(&mut self, ui: &mut Ui) {
         let p = Palette::of(ui.ctx());
         let faint = |t: String| RichText::new(t).size(11.5).color(p.faint);
+        let text = |t: String| RichText::new(t).size(11.5).color(p.muted);
         ui.horizontal(|ui| {
-            if let Some(d) = &self.doc {
+            if self.view == View::Apps {
+                ui.label(text(self.apps.status_line()));
+            } else if let Some(d) = &mut self.doc {
+                let summary = d.summary();
                 let t = &d.tree;
-                let mem = t.memory() as f64 / 1048576.0;
-                let (target, engine) = (&d.target, d.engine.label());
-                let files = fmt_count(t.node(t.root).files as u64);
-                let dirs = fmt_count(t.node(t.root).dirs as u64);
-                let took = fmt_duration(d.elapsed);
-                ui.label(faint(tf!(
-                    "{target} · {engine} · {files} 个文件 · {dirs} 个文件夹 · 用时 {took} · 内存 {mem:.0} MB",
-                    "{target} · {engine} · {files} files · {dirs} folders · {took} · {mem:.0} MB memory",
-                    "{target} · {engine} · ファイル {files} 個 · フォルダー {dirs} 個 · {took} · メモリ {mem:.0} MB"
-                )));
+                let total = t.value(t.root);
+                if summary.count > 0 {
+                    let what = match d.selection.single() {
+                        Some(s) => short_name(t, s).to_string(),
+                        None => n_items(summary.count as u64),
+                    };
+                    let size = fmt_bytes(summary.total);
+                    let share = if total == 0 {
+                        0.0
+                    } else {
+                        summary.total as f64 / total as f64 * 100.0
+                    };
+                    ui.label(text(tf!(
+                        "已选 {what} · {size} · 占全部 {share:.1}%",
+                        "Selected {what} · {size} · {share:.1}% of total",
+                        "選択中 {what} · {size} · 全体の {share:.1}%"
+                    )));
+                } else {
+                    let (target, size) = (&d.target, fmt_bytes(total));
+                    let files = fmt_count(t.node(t.root).files as u64);
+                    let dirs = fmt_count(t.node(t.root).dirs as u64);
+                    ui.label(text(tf!(
+                        "{target} · {size} · {files} 个文件 · {dirs} 个文件夹",
+                        "{target} · {size} · {files} files · {dirs} folders",
+                        "{target} · {size} · ファイル {files} 個 · フォルダー {dirs} 個"
+                    )));
+                }
             } else {
                 ui.label(faint(
                     t!(
@@ -1127,13 +1148,22 @@ impl App {
                 if self.elevated {
                     ui.label(faint(t!("管理员", "Administrator", "管理者").into()));
                 }
-                if let Some((dirs, at)) = self.doc.as_ref().and_then(|d| d.incremental) {
-                    let (dirs, at) = (fmt_count(dirs as u64), fmt_time(at));
-                    ui.label(faint(tf!(
-                        "基于 {at} 的完整扫描，更新了 {dirs} 个有变动的文件夹",
-                        "Based on the full scan of {at}; {dirs} changed folders updated",
-                        "{at} の完全スキャンを基に、変更のあった {dirs} 個のフォルダーを更新"
+                if let Some(d) = self.doc.as_ref().filter(|_| self.view != View::Apps) {
+                    let mem = d.tree.memory() as f64 / 1048576.0;
+                    let (engine, took) = (d.engine.label(), fmt_duration(d.elapsed));
+                    let resp = ui.label(faint(tf!(
+                        "{engine} {took} · 内存 {mem:.0} MB",
+                        "{engine} {took} · {mem:.0} MB memory",
+                        "{engine} {took} · メモリ {mem:.0} MB"
                     )));
+                    if let Some((dirs, at)) = d.incremental {
+                        let (dirs, at) = (fmt_count(dirs as u64), fmt_time(at));
+                        resp.on_hover_text(tf!(
+                            "基于 {at} 的完整扫描，更新了 {dirs} 个有变动的文件夹",
+                            "Based on the full scan of {at}; {dirs} changed folders updated",
+                            "{at} の完全スキャンを基に、変更のあった {dirs} 個のフォルダーを更新"
+                        ));
+                    }
                 }
                 if let Some(e) = self.doc.as_ref().and_then(|d| d.mft_fallback.as_deref()) {
                     ui.label(faint(tf!(
@@ -1592,7 +1622,7 @@ fn tab(ui: &mut Ui, on: bool, glyph: Icon, label: &str) -> egui::Response {
         glyph,
         pos2(rect.left() + 18.0, rect.center().y),
         16.0,
-        if on { p.accent } else { fg },
+        fg,
     );
     ui.painter().galley(
         pos2(rect.left() + 31.0, rect.center().y - galley.size().y / 2.0),
