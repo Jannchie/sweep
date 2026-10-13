@@ -36,12 +36,12 @@ Sweep checks for a new version at startup and once a day and shows a notice in t
 sweep.exe D:\Projects   # opens and analyzes this folder
 ```
 
-Without arguments, click a drive on the Drives page to scan it, or choose "Scan a folder…" to analyze a single folder. When the scan finishes, the Analyze page shows the folder tree at the top, file types on the right and the treemap below.
+Without arguments, click a drive on the Drives page to scan it, or use "Choose folder…" or the path box at the top to analyze a single folder. When the scan finishes, the Analyze page shows the folder tree at the top, file types on the right and the treemap below.
 
 ## Common tasks
 
 - **Find large folders**: the tree is sorted by size, and the "% of parent" column shows each item's share of its folder. Double-click the treemap to zoom into a folder and press Backspace to go up; click a file type on the right to highlight it in the treemap. Press Ctrl+F to search by name.
-- **Clean caches**: open the Clean up page. Each card shows how much space it frees and what it contains; choose "Move to Recycle Bin" or "Delete permanently", and Sweep lists everything before deleting. The right side lists the largest files in the scanned location.
+- **Clean caches**: open the Clean up page. Each entry shows how much space it frees and what it contains; choose "Move to Recycle Bin" or "Delete permanently", and Sweep lists everything before deleting. The right side lists the largest files in the scanned location.
 - **Delete to the Recycle Bin**: select an item in the tree or treemap and press Delete to move it to the Recycle Bin, or Shift+Delete to delete it permanently; both are also on the context menu. Recycled files still use disk space until the Recycle Bin is emptied.
 - **Open and locate**: double-click a file or press Enter to open it with its default app; right-click to show it in File Explorer, copy its path, view properties or rescan a folder.
 
