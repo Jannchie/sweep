@@ -49,7 +49,7 @@ jobs:
           $name = 'sweep-${{ github.ref_name }}-windows-x64'
           New-Item -ItemType Directory dist | Out-Null
           Copy-Item target/release/sweep.exe "dist/$name.exe"
-          Compress-Archive -Path target/release/sweep.exe -DestinationPath "dist/$name.zip"
+          Compress-Archive -Path target/release/sweep.exe, LICENSE -DestinationPath "dist/$name.zip"
           # 安装程序；图标是 sweep/build.rs 生成在 OUT_DIR 里的 sweep.ico。
           $version = '${{ github.ref_name }}'.TrimStart('v')
           $ico = Get-ChildItem target/release/build -Recurse -Filter sweep.ico | Sort-Object LastWriteTime | Select-Object -Last 1

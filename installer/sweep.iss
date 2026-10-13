@@ -72,6 +72,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "{#SourceExe}"; DestDir: "{app}"; DestName: "sweep.exe"; Flags: ignoreversion
+Source: "..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\Sweep"; Filename: "{app}\sweep.exe"

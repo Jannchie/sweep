@@ -57,3 +57,7 @@ cargo build --release   # output: target\release\sweep.exe
 ```
 
 To publish a release, bump the version in `sweep/Cargo.toml` and push a matching tag (for example `v0.2.0`); CI checks that they match, builds it and creates the release.
+
+## License
+
+[MIT](LICENSE). You may use, modify and distribute it freely, including commercially, as long as the copyright and license notice are kept.

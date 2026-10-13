@@ -57,3 +57,7 @@ cargo build --release   # 产物位于 target\release\sweep.exe
 ```
 
 发布新版本：修改 `sweep/Cargo.toml` 中的版本号并推送同名标签（如 `v0.2.0`），CI 会检查版本一致后构建并创建 Release。
+
+## 许可证
+
+[MIT](LICENSE)。可以自由使用、修改、分发，包括商用，只需保留版权与许可声明。
