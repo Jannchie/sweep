@@ -493,6 +493,150 @@ fn dialog_frame(p: &Palette) -> Frame {
         })
 }
 
+/// 删除失败、查到了占用者时的请求：结束这些程序后重试删除。
+pub struct LockedRequest {
+    pub doc: u64,
+    /// 没删掉的项：(节点下标或 NONE, 路径)。
+    pub items: Vec<(u32, String)>,
+    pub permanent: bool,
+    pub size: u64,
+    pub report: crate::locks::Report,
+}
+
+/// 列出占用文件的程序，确认后结束它们并重试删除。
+pub fn confirm_locked(ctx: &egui::Context, req: &LockedRequest) -> Option<Decision> {
+    use crate::locks::Reason;
+    let p = Palette::of(ctx);
+    modal(ctx, "locked", 460.0, |ui| {
+        let mut decision = None;
+        ui.spacing_mut().item_spacing.y = 6.0;
+        let n = n_items(req.items.len() as u64);
+        title(
+            ui,
+            Icon::FileLock,
+            p.danger,
+            &tf!(
+                "{n}正被其他程序使用",
+                "{n} in use by other programs",
+                "{n}がほかのプログラムで使用中です"
+            ),
+        );
+        ui.add_space(4.0);
+        ui.label(
+            RichText::new(t!(
+                "结束这些程序后可以重试，程序里未保存的内容会丢失。",
+                "These programs are holding the files. End them to try again; anything unsaved in them will be lost.",
+                "次のプログラムがファイルを使用しています。終了すると再試行できます。保存されていない内容は失われます。"
+            ))
+            .size(12.5)
+            .color(p.muted),
+        );
+        const SHOWN: usize = 8;
+        Frame::NONE
+            .fill(p.bg)
+            .corner_radius(CornerRadius::same(8))
+            .inner_margin(Margin::symmetric(12, 8))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                for l in req.report.lockers.iter().take(SHOWN) {
+                    let (row, _) =
+                        ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::hover());
+                    let note = if l.protected {
+                        t!("不能结束", "Can't be ended", "終了できません")
+                    } else {
+                        match l.reason {
+                            Reason::InUse => t!("正在使用", "Using files", "使用中"),
+                            Reason::WorkingDirectory => {
+                                t!("工作目录在其中", "Working directory", "作業ディレクトリ")
+                            }
+                        }
+                    };
+                    let note = ui.painter().text(
+                        pos2(row.right(), row.center().y),
+                        Align2::RIGHT_CENTER,
+                        note,
+                        egui::FontId::proportional(12.0),
+                        p.faint,
+                    );
+                    let mut job = egui::text::LayoutJob::default();
+                    job.append(
+                        &l.name,
+                        0.0,
+                        egui::TextFormat::simple(egui::FontId::proportional(12.5), p.text),
+                    );
+                    // 服务进程（svchost 等）附上服务名，才看得出是哪个服务。
+                    let id = match &l.service {
+                        Some(svc) => format!("PID {} · {svc}", l.pid),
+                        None => format!("PID {}", l.pid),
+                    };
+                    job.append(
+                        &id,
+                        8.0,
+                        egui::TextFormat::simple(egui::FontId::proportional(11.5), p.faint),
+                    );
+                    job.wrap = egui::text::TextWrapping::truncate_at_width(
+                        (note.left() - row.left() - 12.0).max(40.0),
+                    );
+                    let g = ui.painter().layout_job(job);
+                    ui.painter().galley(
+                        pos2(row.left(), row.center().y - g.size().y / 2.0),
+                        g,
+                        p.text,
+                    );
+                }
+                let more = req.report.lockers.len().saturating_sub(SHOWN);
+                if more > 0 {
+                    ui.label(
+                        RichText::new(tf!(
+                            "以及另外 {more} 个",
+                            "and {more} more",
+                            "ほか {more} 個"
+                        ))
+                        .size(12.0)
+                        .color(p.faint),
+                    );
+                }
+            });
+        if req.report.truncated {
+            ui.label(
+                RichText::new(t!(
+                    "文件夹里的文件太多，只检查了其中一部分，可能还有其他程序占用。",
+                    "The folder has too many files to check them all; other programs may also be using it.",
+                    "フォルダー内のファイルが多すぎるため一部だけを確認しました。ほかのプログラムも使用している可能性があります。"
+                ))
+                .size(12.0)
+                .color(p.muted),
+            );
+        }
+        let endable = req.report.lockers.iter().any(|l| !l.protected);
+        ui.add_space(12.0);
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            if button(
+                ui,
+                t!("结束并重试", "End and retry", "終了して再試行"),
+                Kind::Danger,
+                endable,
+            )
+            .clicked()
+            {
+                decision = Some(Decision::Confirm);
+            }
+            if button(
+                ui,
+                t!("取消", "Cancel", "キャンセル"),
+                Kind::Secondary,
+                true,
+            )
+            .clicked()
+            {
+                decision = Some(Decision::Cancel);
+            }
+        });
+        decision
+    })
+}
+
 /// 卸载确认：列出要卸载的程序与各自的卸载方式，说明静默卸载与卸载向导的区别。
 pub fn confirm_uninstall(
     ctx: &egui::Context,

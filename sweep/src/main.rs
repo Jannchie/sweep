@@ -11,6 +11,7 @@ mod doc;
 mod file_icons;
 mod fonts;
 mod icons_gen;
+mod locks;
 mod menu;
 mod os;
 mod scan_view;
@@ -35,7 +36,7 @@ use sweep_scan::system::Volume;
 use sweep_scan::{NONE, Scan, flags, t, tf};
 
 use cleanup::Item;
-use dialogs::{Decision, DeleteRequest, Target, Toast};
+use dialogs::{Decision, DeleteRequest, LockedRequest, Target, Toast};
 use doc::{Doc, Mutation};
 use file_icons::FileIcons;
 use icons_gen::Icon;
@@ -158,6 +159,8 @@ pub enum Action {
 
 enum Modal {
     Delete(DeleteRequest),
+    /// 删除失败，查到了占用文件的程序。
+    Locked(LockedRequest),
     EmptyRecycleBin(u64),
     Update(Arc<update::Release>),
     Uninstall(Vec<apps::InstalledApp>),
@@ -173,6 +176,8 @@ enum Job {
         results: Vec<(u32, String, Result<(), String>)>,
         permanent: bool,
         size: u64,
+        /// 没删掉的项被哪些程序占用着。
+        locked: locks::Report,
     },
     Rescanned {
         node: u32,
@@ -650,20 +655,36 @@ impl App {
                 };
                 self.toasts
                     .push(Toast::ok(title.into(), None).tag(TAG_DELETE));
+                self.spawn(ctx, move || delete_job(doc, targets, permanent, size));
+            }
+            Modal::Locked(req) => {
+                self.deleting = true;
+                self.toasts.push(
+                    Toast::ok(
+                        t!(
+                            "正在结束程序并重试…",
+                            "Ending programs and retrying…",
+                            "プログラムを終了して再試行しています…"
+                        )
+                        .into(),
+                        None,
+                    )
+                    .tag(TAG_DELETE),
+                );
+                let LockedRequest {
+                    doc,
+                    items,
+                    permanent,
+                    size,
+                    report,
+                } = req;
                 self.spawn(ctx, move || {
-                    let results = targets
-                        .into_iter()
-                        .map(|(n, p)| {
-                            let r = os::delete(&p, permanent);
-                            (n, p, r)
-                        })
-                        .collect();
-                    Job::Deleted {
-                        doc,
-                        results,
-                        permanent,
-                        size,
+                    for l in report.lockers.iter().filter(|l| !l.protected) {
+                        let _ = locks::end(l);
                     }
+                    // 等进程退出、句柄关闭后再删。
+                    std::thread::sleep(Duration::from_millis(500));
+                    delete_job(doc, items, permanent, size)
                 });
             }
             Modal::Update(_) => {}
@@ -708,7 +729,8 @@ impl App {
                     results,
                     permanent,
                     size,
-                } => self.after_delete(ctx, doc, results, permanent, size),
+                    locked,
+                } => self.after_delete(ctx, doc, results, permanent, size, locked),
                 Job::RecycleEmptied(r) => {
                     match r {
                         Ok(()) => self.notify_ok(
@@ -744,6 +766,7 @@ impl App {
         results: Vec<(u32, String, Result<(), String>)>,
         permanent: bool,
         size: u64,
+        locked: locks::Report,
     ) {
         self.deleting = false;
         self.toasts.retain(|t| t.tag != TAG_DELETE);
@@ -752,6 +775,8 @@ impl App {
             .filter_map(|r| r.2.as_ref().err().map(|e| (&r.1, e)))
             .collect();
         let mut rescan = Vec::new();
+        // 没删掉的项的大小，重试时用于提示。
+        let mut failed_size = 0;
         if let Some(d) = &mut self.doc {
             let mut removed = Vec::new();
             for (node, path, r) in &results {
@@ -763,6 +788,9 @@ impl App {
                     d.tree.find(path)
                 };
                 let Some(n) = n else { continue };
+                if r.is_err() {
+                    failed_size += d.tree.node(n).size;
+                }
                 match r {
                     Ok(()) => removed.push(n),
                     Err(_) if d.tree.node(n).is_dir() => rescan.push(n),
@@ -779,7 +807,39 @@ impl App {
         let done = (results.len() - failed.len()) as u64;
         let n = n_items(done);
         let failures = failed.len();
+        // 查到了占用者：弹窗让用户选择结束它们重试，删掉的部分照常提示。
+        let blocked = !failed.is_empty() && !locked.lockers.is_empty();
+        if blocked {
+            self.modal = Some(Modal::Locked(LockedRequest {
+                doc,
+                items: results
+                    .iter()
+                    .filter(|r| r.2.is_err())
+                    .map(|r| (r.0, r.1.clone()))
+                    .collect(),
+                permanent,
+                size: failed_size,
+                report: locked,
+            }));
+        }
         match failed.first() {
+            _ if blocked && done == 0 => {}
+            _ if blocked => {
+                let title = if permanent {
+                    tf!(
+                        "已永久删除 {n}",
+                        "Permanently deleted {n}",
+                        "{n}を完全に削除しました"
+                    )
+                } else {
+                    tf!(
+                        "已将 {n}移到回收站",
+                        "Moved {n} to the Recycle Bin",
+                        "{n}をごみ箱に移動しました"
+                    )
+                };
+                self.notify_ok(title, None);
+            }
             None => {
                 let title = if permanent {
                     tf!(
@@ -1511,6 +1571,7 @@ impl eframe::App for App {
                     None
                 }
                 Modal::Delete(req) => dialogs::confirm_delete(&ctx, req),
+                Modal::Locked(req) => dialogs::confirm_locked(&ctx, req),
                 Modal::Uninstall(list) => dialogs::confirm_uninstall(&ctx, list, self.elevated),
                 Modal::EmptyRecycleBin(size) => dialogs::confirm(
                     &ctx,
@@ -1576,6 +1637,34 @@ impl eframe::App for App {
         for a in actions {
             self.apply(&ctx, a);
         }
+    }
+}
+
+/// 删除一批项；删不掉的，再查一下是哪些程序占用着。在后台线程调用。
+fn delete_job(doc: u64, targets: Vec<(u32, String)>, permanent: bool, size: u64) -> Job {
+    let results: Vec<(u32, String, Result<(), String>)> = targets
+        .into_iter()
+        .map(|(n, p)| {
+            let r = os::delete(&p, permanent);
+            (n, p, r)
+        })
+        .collect();
+    let failed: Vec<std::path::PathBuf> = results
+        .iter()
+        .filter(|r| r.2.is_err())
+        .map(|r| std::path::PathBuf::from(&r.1))
+        .collect();
+    let locked = if failed.is_empty() {
+        locks::Report::default()
+    } else {
+        locks::find(&failed)
+    };
+    Job::Deleted {
+        doc,
+        results,
+        permanent,
+        size,
+        locked,
     }
 }
 
