@@ -6,7 +6,7 @@ use eframe::egui::{
 };
 
 /// 文字色均满足 WCAG AAA（≥ 7:1），覆盖它们会出现的全部背景：窗口、卡片、悬停行、
-/// 选中行（`selection` 叠在 `bg` 上）以及标签底色。改色后请重新核对对比度。
+/// 选中行（`selection` 叠在 `bg` 上）。改色后请重新核对对比度。
 #[derive(Clone, Copy)]
 pub struct Palette {
     pub bg: Color32,
@@ -19,13 +19,9 @@ pub struct Palette {
     pub muted: Color32,
     pub faint: Color32,
     pub accent: Color32,
-    /// 标签文字（accent 色调的浅底标签上）。
-    pub chip: Color32,
     pub danger: Color32,
     /// 选中行底色：正文色的透明度。
     pub selection_alpha: f32,
-    /// 标签底色的 accent 透明度。
-    pub chip_alpha: f32,
 }
 
 /// 配色对齐 Windows 11（资源管理器、任务管理器）：暗色背景 #202020、卡片 #2B2B2B，
@@ -40,10 +36,8 @@ const DARK: Palette = Palette {
     muted: Color32::from_rgb(0xd6, 0xd6, 0xd6), // ≥ 8.6:1
     faint: Color32::from_rgb(0xc2, 0xc2, 0xc2), // ≥ 7.0:1
     accent: Color32::from_rgb(0xff, 0x8a, 0x3d),
-    chip: Color32::from_rgb(0xff, 0xcb, 0xa6),   // ≥ 10:1
     danger: Color32::from_rgb(0xff, 0xb4, 0xb4), // ≥ 7.4:1（只出现在按钮上）
     selection_alpha: 0.10,
-    chip_alpha: 0.12,
 };
 
 const LIGHT: Palette = Palette {
@@ -56,10 +50,8 @@ const LIGHT: Palette = Palette {
     muted: Color32::from_rgb(0x3d, 0x3d, 0x3d), // ≥ 8.9:1
     faint: Color32::from_rgb(0x4a, 0x4a, 0x4a), // ≥ 7.3:1
     accent: Color32::from_rgb(0xea, 0x58, 0x0c),
-    chip: Color32::from_rgb(0x7c, 0x2d, 0x12),   // ≥ 8.4:1
     danger: Color32::from_rgb(0x8a, 0x18, 0x18), // ≥ 7.7:1（只出现在按钮上）
     selection_alpha: 0.07,
-    chip_alpha: 0.09,
 };
 
 /// 矩形树图与类型面板共用的扩展名配色：按占用大小排前 12 的扩展名各取一色，其余用中性灰。

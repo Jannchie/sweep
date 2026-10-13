@@ -21,7 +21,6 @@ const USED = [
   ['FolderOpen', 'folder-open'],
   ['FolderSearch', 'folder-search-badge'],
   ['File', 'file'],
-  ['Files', 'files'],
   ['HardDrive', 'hard-drive'],
   ['Ssd', 'ssd'],
   ['UsbDrive', 'usb-drive'],

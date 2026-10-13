@@ -1,4 +1,4 @@
-//! 自绘小部件：图标、品牌标志、点阵进度条、KPI 卡片、搜索框、按钮、菜单、开关、表头。
+//! 自绘小部件：图标、品牌标志、点阵进度条、搜索框、按钮、菜单、开关、表头。
 
 use eframe::egui::{
     self, Align2, Color32, CornerRadius, FontId, Mesh, Painter, Pos2, Rect, Response, RichText,
@@ -6,7 +6,7 @@ use eframe::egui::{
 };
 
 use crate::icons_gen::{Icon, PX_MAX, PX_MIN};
-use crate::theme::{Palette, semibold};
+use crate::theme::Palette;
 
 /// 画一个 jannchie-icons 图标。尺寸换算成设备像素后取对应的像素对齐版本，
 /// 并把左上角对齐到像素网格，否则对齐就白做了。
@@ -495,85 +495,6 @@ pub fn submenu(
             bg,
             Shape::rect_filled(resp.rect, CornerRadius::same(6), p.hover),
         );
-    }
-}
-
-// ---------------------------------------------------------------- KPI 卡片
-
-/// KPI 卡片：左上图标 + 标题，右上一行说明，下面一个大数字。
-#[allow(clippy::too_many_arguments)]
-pub fn kpi(
-    ui: &mut Ui,
-    width: f32,
-    height: f32,
-    glyph: Icon,
-    title: &str,
-    value: &str,
-    sub: &str,
-    color: Color32,
-) -> Response {
-    let p = Palette::of(ui.ctx());
-    let (rect, resp) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
-    let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, CornerRadius::same(12), p.surface);
-    let inner = rect.shrink(14.0);
-    icon(
-        ui,
-        glyph,
-        pos2(inner.left() + 8.0, inner.top() + 8.0),
-        16.0,
-        color,
-    );
-    // 标题和右侧说明共用一行，都单行显示、放不下时以省略号截断：
-    // 标题优先，但给说明至少留出它所需宽度与整行 40% 中较小的那部分。
-    let line = |text: &str, size: f32, color: Color32, width: f32| {
-        let mut job = egui::text::LayoutJob::simple_singleline(
-            text.to_string(),
-            FontId::proportional(size),
-            color,
-        );
-        job.wrap = egui::text::TextWrapping::truncate_at_width(width.max(0.0));
-        painter.layout_job(job)
-    };
-    let full = inner.width() - 22.0;
-    let sub_need = painter
-        .layout_no_wrap(sub.to_string(), FontId::proportional(11.5), p.faint)
-        .size()
-        .x;
-    let title_g = line(title, 12.5, p.muted, full - 12.0 - sub_need.min(full * 0.4));
-    let title_cut = title_g.elided;
-    let title_right = inner.left() + 22.0 + title_g.size().x;
-    painter.galley(
-        pos2(
-            inner.left() + 22.0,
-            inner.top() + 8.0 - title_g.size().y / 2.0,
-        ),
-        title_g,
-        p.muted,
-    );
-    let room = inner.right() - title_right - 12.0;
-    if room > 20.0 {
-        let g = line(sub, 11.5, p.faint, room);
-        painter.galley(
-            pos2(
-                inner.right() - g.size().x,
-                inner.top() + 8.0 - g.size().y / 2.0,
-            ),
-            g,
-            p.faint,
-        );
-    }
-    painter.text(
-        pos2(inner.left(), inner.bottom()),
-        Align2::LEFT_BOTTOM,
-        value,
-        FontId::new(24.0, semibold()),
-        p.text,
-    );
-    if title_cut {
-        resp.on_hover_text(title)
-    } else {
-        resp
     }
 }
 

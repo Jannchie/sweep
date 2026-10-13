@@ -17,23 +17,7 @@ use crate::{Action, List, fmt_bytes, fmt_count, fmt_time, widgets};
 pub fn show(ui: &mut Ui, doc: &mut Doc, icons: &mut FileIcons, deleting: bool) -> Vec<Action> {
     let p = Palette::of(ui.ctx());
     let mut actions = Vec::new();
-    ui.add_space(8.0);
-    ui.label(
-        RichText::new(t!("清理", "Clean up", "クリーンアップ"))
-            .size(22.0)
-            .family(semibold())
-            .color(p.text),
-    );
-    ui.label(
-        RichText::new(t!(
-            "常见的可回收空间与最大的文件。所有删除都会先列出内容让你确认。",
-            "Common space you can reclaim, and the largest files. Every deletion lists what it removes and asks first.",
-            "よく空き領域を確保できる場所と、最も大きいファイルです。削除する前に必ず内容を表示して確認します。"
-        ))
-            .size(13.0)
-            .color(p.muted),
-    );
-    ui.add_space(12.0);
+    ui.add_space(4.0);
 
     let avail = ui.available_rect_before_wrap();
     let gap = 20.0;
@@ -249,7 +233,7 @@ fn suggestion_row(
         s.kind.icon(),
         pos2(row.left() + 18.0, cy),
         17.0,
-        p.accent,
+        p.muted,
     );
     let text_left = row.left() + 38.0;
     let text_right = (x - 8.0).max(text_left + 40.0);

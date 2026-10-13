@@ -37,23 +37,15 @@ pub fn show(
                 ui.add_space(pad);
                 ui.vertical(|ui| {
                     ui.set_width(w);
-                    ui.add_space(8.0);
-                    ui.label(
-                        RichText::new(t!("设置", "Settings", "設定"))
-                            .size(22.0)
-                            .family(semibold())
-                            .color(Palette::of(ui.ctx()).text),
-                    );
-                    ui.add_space(4.0);
 
                     group(ui, t!("分析", "Analysis", "分析"), |ui| {
                         row(
                             ui,
                             t!("大小口径", "Size basis", "サイズの基準"),
                             t!(
-                                "排序、矩形树图面积与百分比按哪种大小计算。占用空间就是删除后能腾出的空间。",
-                                "Which size drives sorting, treemap areas and percentages. Size on disk is the space you get back by deleting.",
-                                "並べ替え、ツリーマップの面積、割合に使うサイズです。ディスク上のサイズは削除して空く容量です。"
+                                "排序、矩形树图与百分比使用的大小；占用空间即删除后能腾出的空间。",
+                                "Used for sorting, the treemap and percentages. Size on disk is what deleting frees.",
+                                "並べ替え、ツリーマップ、割合に使うサイズ。ディスク上のサイズは削除で空く容量です。"
                             ),
                             |ui| {
                                 let labels = Basis::ALL.map(|b| b.label());
@@ -66,15 +58,15 @@ pub fn show(
                         divider(ui);
                         let desc = if elevated {
                             t!(
-                                "读取 MFT 只适用于 NTFS 卷的根目录；文件夹、其他文件系统总是遍历目录。",
-                                "MFT reading works only for the root of an NTFS volume. Folders and other file systems are always walked.",
-                                "MFT の読み取りは NTFS ボリュームのルートでのみ使えます。フォルダーやほかのファイル システムは常に走査します。"
+                                "MFT 只用于 NTFS 卷的根目录，其余情况总是遍历目录。",
+                                "The MFT is used only for NTFS volume roots; everything else is walked.",
+                                "MFT は NTFS ボリュームのルートだけで使い、それ以外は常に走査します。"
                             )
                         } else {
                             t!(
-                                "读取 MFT 需要以管理员身份运行，现在总是遍历目录。",
-                                "Reading the MFT requires administrator rights, so folders are always walked right now.",
-                                "MFT の読み取りには管理者権限が必要なため、現在は常にフォルダーを走査します。"
+                                "读取 MFT 需要管理员权限，现在总是遍历目录。",
+                                "Reading the MFT needs administrator rights; folders are walked for now.",
+                                "MFT の読み取りには管理者権限が必要なため、現在は常に走査します。"
                             )
                         };
                         row(ui, t!("扫描方式", "Scan method", "スキャン方法"), desc, |ui| {
@@ -92,9 +84,9 @@ pub fn show(
                             ui,
                             t!("以管理员身份启动", "Start as administrator", "管理者として起動"),
                             t!(
-                                "读取 MFT、增量扫描和卸载为所有用户安装的程序都需要管理员权限。启动时 Windows 会请求确认，拒绝则以普通权限运行。下次启动时生效。",
-                                "Reading the MFT, incremental scans and uninstalling apps installed for all users need administrator rights. Windows asks at startup; if you decline, Sweep runs with standard rights. Takes effect the next time Sweep starts.",
-                                "MFT の読み取り、差分スキャン、すべてのユーザー向けアプリのアンインストールには管理者権限が必要です。起動時に Windows が確認を求め、拒否すると通常の権限で実行します。次回の起動時に反映されます。"
+                                "读取 MFT、增量扫描等需要管理员权限；拒绝时以普通权限运行。",
+                                "Needed for MFT reads and incremental scans; declining keeps standard rights.",
+                                "MFT の読み取りや差分スキャンに必要です。拒否すると通常の権限で実行します。"
                             ),
                             |ui| {
                                 widgets::switch(ui, &mut settings.elevate);
@@ -103,9 +95,9 @@ pub fn show(
                         divider(ui);
                         let size = crate::fmt_bytes(cache_usage);
                         let desc = tf!(
-                            "保存扫描结果。以管理员身份再次扫描 NTFS 磁盘时，只更新之后有变动的文件夹；间隔太久、系统的变更日志已不完整时自动完整扫描。缓存占用 {size}。",
-                            "Saves scan results. When an NTFS drive is scanned again as administrator, only the folders that changed since are updated; after a long gap, when the system change journal no longer covers it, a full scan runs instead. Using {size}.",
-                            "スキャン結果を保存します。管理者として NTFS ドライブを再スキャンすると、その後に変更のあったフォルダーだけを更新します。間隔が長くシステムの変更ジャーナルで追跡しきれない場合は完全スキャンになります。使用量 {size}。"
+                            "再次扫描时只更新有变动的文件夹。缓存占用 {size}。",
+                            "Rescans update only the folders that changed. Using {size}.",
+                            "再スキャンでは変更のあったフォルダーだけを更新します。使用量 {size}。"
                         );
                         row(ui, t!("增量扫描", "Incremental scans", "差分スキャン"), &desc, |ui| {
                             ui.spacing_mut().item_spacing.x = 12.0;
@@ -220,9 +212,9 @@ pub fn show(
                             ui,
                             t!("自动检查更新", "Check for updates automatically", "更新を自動的に確認する"),
                             t!(
-                                "启动时和每天检查一次 GitHub 上的新版本。只有在你确认后才会安装。",
-                                "Checks GitHub for a new version at startup and once a day. Updates are installed only when you confirm.",
-                                "起動時と 1 日 1 回、GitHub で新しいバージョンを確認します。更新は確認した後にのみインストールされます。"
+                                "启动时和每天检查一次新版本，确认后才安装。",
+                                "Checks for a new version at startup and daily; installs only after you confirm.",
+                                "起動時と 1 日 1 回、新しいバージョンを確認します。インストールは確認後のみです。"
                             ),
                             |ui| {
                                 widgets::switch(ui, &mut settings.auto_update);
@@ -257,25 +249,32 @@ fn group(ui: &mut Ui, title: &str, body: impl FnOnce(&mut Ui)) {
         });
 }
 
-/// 一行设置：左边名称 + 说明，右边控件，两者都在行内垂直居中。说明太长时换行，行高随之增加。
+/// 一行设置：左边名称 + 一行说明，右边控件，两者都在行内垂直居中。
+/// 说明放不下时以省略号截断，悬停在这一行上显示全文。
 fn row(ui: &mut Ui, title: &str, desc: &str, control: impl FnOnce(&mut Ui)) {
     let p = Palette::of(ui.ctx());
     let width = ui.available_width();
-    // 给右侧控件留出位置后，说明按剩余宽度换行。
+    // 给右侧控件留出位置。
     let text_w = (width - 300.0).max(200.0);
     let title = ui
         .painter()
         .layout_no_wrap(title.to_string(), FontId::proportional(13.5), p.text);
-    let desc = ui.painter().layout(
+    let mut job = egui::text::LayoutJob::simple_singleline(
         desc.to_string(),
         FontId::proportional(12.0),
         p.muted,
-        text_w,
     );
+    job.wrap = egui::text::TextWrapping::truncate_at_width(text_w);
+    let full = desc.to_string();
+    let desc = ui.painter().layout_job(job);
+    let truncated = desc.elided;
     let gap = 3.0;
     let content = title.size().y + gap + desc.size().y;
-    let h = (content + 28.0).max(64.0);
-    let (rect, _) = ui.allocate_exact_size(vec2(width, h), Sense::hover());
+    let h = (content + 26.0).max(60.0);
+    let (rect, resp) = ui.allocate_exact_size(vec2(width, h), Sense::hover());
+    if truncated {
+        resp.on_hover_text(full);
+    }
     let top = rect.center().y - content / 2.0;
     let desc_top = top + title.size().y + gap;
     ui.painter().galley(pos2(rect.left(), top), title, p.text);

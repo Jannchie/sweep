@@ -1,4 +1,4 @@
-//! 扫描进度页：KPI 卡片、点阵进度条、当前路径；遍历目录时还实时列出根下各文件夹扫到的大小。
+//! 扫描进度页：标题行、点阵进度条、一行统计与当前路径；遍历目录时还实时列出根下各文件夹扫到的大小。
 
 use std::sync::atomic::Ordering;
 
@@ -39,7 +39,7 @@ pub fn show(ui: &mut Ui, scan: &Scan, volumes: &[Volume]) -> Vec<Action> {
         )
     };
 
-    ui.add_space(8.0);
+    ui.add_space(4.0);
     ui.horizontal(|ui| {
         ui.label(
             RichText::new({
@@ -50,9 +50,32 @@ pub fn show(ui: &mut Ui, scan: &Scan, volumes: &[Volume]) -> Vec<Action> {
                     "{target} をスキャン中"
                 )
             })
-            .size(22.0)
+            .size(16.0)
             .family(semibold())
             .color(p.text),
+        );
+        ui.label(
+            RichText::new(if incremental {
+                t!(
+                    "载入上次的结果，只更新之后有变动的文件夹",
+                    "loading the previous result and updating only changed folders",
+                    "前回の結果を読み込み、変更のあったフォルダーだけを更新"
+                )
+            } else if mft {
+                t!(
+                    "读取 NTFS 主文件表（MFT）",
+                    "reading the NTFS master file table (MFT)",
+                    "NTFS マスター ファイル テーブル (MFT) を読み取り"
+                )
+            } else {
+                t!(
+                    "逐个目录遍历",
+                    "walking folders one by one",
+                    "フォルダーを順に走査"
+                )
+            })
+            .size(12.5)
+            .color(p.muted),
         );
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if widgets::tool_button(
@@ -68,93 +91,30 @@ pub fn show(ui: &mut Ui, scan: &Scan, volumes: &[Volume]) -> Vec<Action> {
             }
         });
     });
-    ui.label(
-        RichText::new(if incremental {
-            t!(
-                "正在载入上次的结果，只更新之后有变动的文件夹",
-                "Loading the previous result and updating only the folders that changed since",
-                "前回の結果を読み込み、その後に変更のあったフォルダーだけを更新しています"
-            )
-        } else if mft {
-            t!(
-                "正在读取 NTFS 主文件表（MFT）",
-                "Reading the NTFS master file table (MFT)",
-                "NTFS マスター ファイル テーブル (MFT) を読み取っています"
-            )
-        } else {
-            t!(
-                "正在逐个目录遍历",
-                "Walking folders one by one",
-                "フォルダーを順に走査しています"
-            )
-        })
-        .size(13.0)
-        .color(p.muted),
-    );
     ui.add_space(14.0);
-
-    let gap = 12.0;
-    let w = ((ui.available_width() - gap * 3.0) / 4.0).floor();
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = gap;
-        widgets::kpi(
-            ui,
-            w,
-            84.0,
-            Icon::Files,
-            t!("文件", "Files", "ファイル"),
-            &fmt_count(files),
-            t!("已发现", "found", "検出済み"),
-            p.accent,
-        );
-        widgets::kpi(
-            ui,
-            w,
-            84.0,
-            Icon::Folder,
-            t!("文件夹", "Folders", "フォルダー"),
-            &fmt_count(dirs),
-            t!("已发现", "found", "検出済み"),
-            p.accent,
-        );
-        widgets::kpi(
-            ui,
-            w,
-            84.0,
-            Icon::HardDrive,
-            t!("大小", "Size", "サイズ"),
-            &fmt_bytes(bytes),
-            t!("文件大小合计", "total file size", "ファイル サイズの合計"),
-            p.accent,
-        );
-        widgets::kpi(
-            ui,
-            w,
-            84.0,
-            Icon::Clock,
-            t!("用时", "Elapsed", "経過時間"),
-            &fmt_duration(scan.started.elapsed()),
-            &match frac {
-                Some(f) => {
-                    let pct = f * 100.0;
-                    tf!("约 {pct:.0}%", "about {pct:.0}%", "約 {pct:.0}%")
-                }
-                None => t!("进行中", "in progress", "実行中").into(),
-            },
-            p.accent,
-        );
-    });
-    ui.add_space(18.0);
 
     // 点阵进度条；扫文件夹时没有总量，不显示。
     if let Some(f) = frac {
-        let (bar, _) = ui.allocate_exact_size(vec2(ui.available_width(), 10.0), Sense::hover());
+        let (bar, _) = ui.allocate_exact_size(vec2(ui.available_width(), 8.0), Sense::hover());
         widgets::meter(ui.painter(), bar, f, p.accent, p.track);
         ui.add_space(10.0);
     }
+    let (files, dirs, size) = (fmt_count(files), fmt_count(dirs), fmt_bytes(bytes));
+    let took = fmt_duration(scan.started.elapsed());
+    let mut line = tf!(
+        "{files} 个文件 · {dirs} 个文件夹 · {size} · 用时 {took}",
+        "{files} files · {dirs} folders · {size} · {took} elapsed",
+        "ファイル {files} 個 · フォルダー {dirs} 個 · {size} · 経過 {took}"
+    );
+    if let Some(f) = frac {
+        let pct = f * 100.0;
+        line += &tf!(" · 约 {pct:.0}%", " · about {pct:.0}%", " · 約 {pct:.0}%");
+    }
+    ui.label(RichText::new(line).size(13.0).color(p.text));
+    ui.add_space(2.0);
     let current = pr.current();
     ui.add(egui::Label::new(RichText::new(current).size(12.0).color(p.faint)).truncate());
-    ui.add_space(14.0);
+    ui.add_space(18.0);
 
     // 遍历目录时：根下各文件夹已扫到的大小。
     let mut top = pr.top.lock().unwrap().clone();
@@ -195,7 +155,7 @@ pub fn show(ui: &mut Ui, scan: &Scan, volumes: &[Volume]) -> Vec<Action> {
                 ui.painter(),
                 meter,
                 *size as f32 / max as f32,
-                p.accent,
+                p.faint,
                 p.track,
             );
             ui.painter().text(
