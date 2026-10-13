@@ -41,7 +41,7 @@ Without arguments, click a drive on the Drives page to scan it, or use "Choose f
 ## Common tasks
 
 - **Find large folders**: the tree is sorted by size, and the "% of parent" column shows each item's share of its folder. Double-click the treemap to zoom into a folder and press Backspace to go up; click a file type on the right to highlight it in the treemap. Press Ctrl+F to search by name.
-- **Clean caches**: open the Clean up page. Each entry shows how much space it frees and what it contains; choose "Move to Recycle Bin" or "Delete permanently", and Sweep lists everything before deleting. The right side lists the largest files in the scanned location.
+- **Clean caches**: open the Clean up page and pick "Large files" or a place to clean up on the left; the right side lists the folders and files inside with their sizes. Move all of them, or only the ones you check, to the Recycle Bin or delete them permanently; Sweep lists everything before deleting.
 - **Delete to the Recycle Bin**: select an item in the tree or treemap and press Delete to move it to the Recycle Bin, or Shift+Delete to delete it permanently; both are also on the context menu. Recycled files still use disk space until the Recycle Bin is emptied.
 - **Open and locate**: double-click a file or press Enter to open it with its default app; right-click to show it in File Explorer, copy its path, view properties or rescan a folder.
 
