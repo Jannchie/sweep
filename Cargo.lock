@@ -2366,7 +2366,7 @@ dependencies = [
 
 [[package]]
 name = "sweep"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "eframe",
  "egui_extras",
