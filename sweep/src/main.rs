@@ -44,6 +44,18 @@ use theme::Palette;
 use treemap::Treemap;
 
 fn main() -> eframe::Result {
+    // 默认以管理员身份运行：不是管理员时请求提权，以新进程重新启动自己。
+    // 在 UAC 提示里拒绝（或没有管理员账户）时照常以普通权限运行。
+    if Settings::load().elevate && !sweep_scan::system::is_elevated() {
+        let args: Vec<String> = std::env::args()
+            .skip(1)
+            // 结尾的反斜杠会把收尾的引号转义掉（"C:\" → C:"），先去掉。
+            .map(|a| format!("\"{}\"", a.trim_end_matches('\\')))
+            .collect();
+        if os::relaunch_elevated(&args.join(" ")) {
+            return Ok(());
+        }
+    }
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Sweep")

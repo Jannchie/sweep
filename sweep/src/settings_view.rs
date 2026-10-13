@@ -88,6 +88,19 @@ pub fn show(
                             }
                         });
                         divider(ui);
+                        row(
+                            ui,
+                            t!("以管理员身份启动", "Start as administrator", "管理者として起動"),
+                            t!(
+                                "读取 MFT、增量扫描和卸载为所有用户安装的程序都需要管理员权限。启动时 Windows 会请求确认，拒绝则以普通权限运行。下次启动时生效。",
+                                "Reading the MFT, incremental scans and uninstalling apps installed for all users need administrator rights. Windows asks at startup; if you decline, Sweep runs with standard rights. Takes effect the next time Sweep starts.",
+                                "MFT の読み取り、差分スキャン、すべてのユーザー向けアプリのアンインストールには管理者権限が必要です。起動時に Windows が確認を求め、拒否すると通常の権限で実行します。次回の起動時に反映されます。"
+                            ),
+                            |ui| {
+                                widgets::switch(ui, &mut settings.elevate);
+                            },
+                        );
+                        divider(ui);
                         let size = crate::fmt_bytes(cache_usage);
                         let desc = tf!(
                             "保存扫描结果。以管理员身份再次扫描 NTFS 磁盘时，只更新之后有变动的文件夹；间隔太久、系统的变更日志已不完整时自动完整扫描。缓存占用 {size}。",
