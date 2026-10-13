@@ -26,6 +26,13 @@ pub struct Derived {
     pub largest: Vec<u32>,
 }
 
+/// 清理页左栏选中的项目。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CleanupPick {
+    Largest,
+    Suggestion(cleanup::Kind),
+}
+
 pub enum Mutation {
     /// 已经删掉了，从树上摘除。
     Remove(Vec<u32>),
@@ -72,6 +79,9 @@ pub struct Doc {
     derived_rx: Option<Receiver<Derived>>,
     derived_requested: Option<u64>,
     pub suggestions: Option<Vec<Suggestion>>,
+    /// 清理页：左栏选中的项目，以及右栏里勾选的条目（路径）。
+    pub cleanup_pick: CleanupPick,
+    pub cleanup_checked: HashSet<String>,
     suggest_rx: Option<Receiver<Vec<Suggestion>>>,
     suggest_requested: Option<u64>,
     pub search: Search,
@@ -127,6 +137,8 @@ impl Doc {
             derived_rx: None,
             derived_requested: None,
             suggestions: None,
+            cleanup_pick: CleanupPick::Largest,
+            cleanup_checked: HashSet::new(),
             suggest_rx: None,
             suggest_requested: None,
             search: Search::default(),

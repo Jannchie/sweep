@@ -401,6 +401,9 @@ pub fn compute(tree: Arc<Tree>) -> Vec<Suggestion> {
             folders: Vec::new(),
         });
     }
+    for s in &mut out {
+        s.items.sort_by_key(|i| std::cmp::Reverse(i.size));
+    }
     out.sort_by_key(|s| std::cmp::Reverse(s.size));
 
     // Windows 更新缓存：只提示，用系统的磁盘清理处理更安全。

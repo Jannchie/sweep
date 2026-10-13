@@ -1554,7 +1554,16 @@ impl eframe::App for App {
         let idle = self.modal.is_none() && self.menu.is_none() && self.scan.is_none() && !typing;
         let key_action = match self.view {
             View::Analyze if idle => self.keyboard(&ctx),
-            View::Cleanup if idle => self.selection_keys(&ctx, List::Largest),
+            // 快捷键作用于"大文件"列表的选择；选中别的项目时那份选择不可见，不响应。
+            View::Cleanup
+                if idle
+                    && self
+                        .doc
+                        .as_ref()
+                        .is_some_and(|d| d.cleanup_pick == doc::CleanupPick::Largest) =>
+            {
+                self.selection_keys(&ctx, List::Largest)
+            }
             View::Apps if idle => {
                 if let Some(apps_view::AppsAction::Uninstall(list)) = self.apps.keys(&ctx) {
                     self.modal = Some(Modal::Uninstall(list));

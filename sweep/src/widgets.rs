@@ -198,41 +198,6 @@ pub fn tool_button(ui: &mut Ui, glyph: Icon, label: &str, enabled: bool, danger:
     button_on(ui, glyph, label, enabled, danger, p.surface)
 }
 
-/// 只有图标的小按钮，放在 `rect` 里；文字作为悬停提示。`danger` 用于删除这类破坏性操作。
-pub fn icon_button(
-    ui: &mut Ui,
-    rect: Rect,
-    id: egui::Id,
-    glyph: Icon,
-    tip: &str,
-    enabled: bool,
-    danger: bool,
-) -> Response {
-    let p = Palette::of(ui.ctx());
-    let sense = if enabled {
-        Sense::click()
-    } else {
-        Sense::hover()
-    };
-    let resp = ui.interact(rect, id, sense);
-    if enabled && resp.hovered() {
-        ui.painter()
-            .rect_filled(rect, CornerRadius::same(7), p.hover);
-    }
-    let color = match (enabled, danger) {
-        (false, _) => p.faint,
-        (true, true) => p.danger,
-        (true, false) => p.muted,
-    };
-    icon(ui, glyph, rect.center(), 15.0, color);
-    let resp = resp.on_hover_text(tip);
-    if enabled {
-        resp.on_hover_cursor(egui::CursorIcon::PointingHand)
-    } else {
-        resp
-    }
-}
-
 fn button_on(
     ui: &mut Ui,
     glyph: Icon,
@@ -409,6 +374,24 @@ pub fn header_label(ui: &mut Ui, label: &str, right_aligned: bool) {
         right_aligned,
         |_| {},
     );
+}
+
+/// 与 `painter.text` 相同，但只画一行，超过 `max_width` 时以省略号截断。返回所占区域。
+pub fn text_truncated(
+    painter: &Painter,
+    pos: Pos2,
+    align: Align2,
+    text: &str,
+    font: FontId,
+    color: Color32,
+    max_width: f32,
+) -> Rect {
+    let mut job = egui::text::LayoutJob::simple_singleline(text.to_owned(), font, color);
+    job.wrap = egui::text::TextWrapping::truncate_at_width(max_width.max(0.0));
+    let galley = painter.layout_job(job);
+    let rect = align.anchor_size(pos, galley.size());
+    painter.galley(rect.min, galley, color);
+    rect
 }
 
 /// 右对齐的单元格文字。
