@@ -346,11 +346,8 @@ pub fn table_header(
     };
     let resp = ui.interact(cell, ui.auto_id_with("table-header"), sense);
     if sortable && resp.hovered() {
-        ui.painter().rect_filled(
-            cell.shrink2(vec2(0.0, 4.0)),
-            CornerRadius::same(6),
-            p.hover,
-        );
+        ui.painter()
+            .rect_filled(cell.shrink2(vec2(0.0, 4.0)), CornerRadius::same(6), p.hover);
     }
     ui.painter().hline(
         r.x_range().expand(6.0),
