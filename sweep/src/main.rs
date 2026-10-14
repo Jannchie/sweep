@@ -1067,12 +1067,8 @@ impl App {
             } else {
                 ui.add_space(20.0);
             }
-            let resp = tab(
-                ui,
-                self.view == View::Settings,
-                Icon::Settings,
-                t!("设置", "Settings", "設定"),
-            );
+            let resp = icon_tab(ui, self.view == View::Settings, Icon::Settings)
+                .on_hover_text(t!("设置", "Settings", "設定"));
             holes.push(resp.rect);
             if resp.clicked() {
                 self.view = View::Settings;
@@ -1727,6 +1723,22 @@ fn tab(ui: &mut Ui, on: bool, glyph: Icon, label: &str) -> egui::Response {
         galley,
         fg,
     );
+    resp
+}
+
+/// 只有图标的页签（设置），与 `tab` 同高同样式。
+fn icon_tab(ui: &mut Ui, on: bool, glyph: Icon) -> egui::Response {
+    let p = Palette::of(ui.ctx());
+    let (rect, resp) = ui.allocate_exact_size(vec2(32.0, 32.0), Sense::click());
+    if on || resp.hovered() {
+        ui.painter().rect_filled(
+            rect,
+            egui::CornerRadius::same(8),
+            if on { p.surface } else { p.hover },
+        );
+    }
+    let fg = if on { p.text } else { p.muted };
+    widgets::icon(ui, glyph, rect.center(), 18.0, fg);
     resp
 }
 

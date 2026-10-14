@@ -418,7 +418,7 @@ impl AppsPage {
                 let text = RichText::new(label)
                     .size(12.0)
                     .color(if on { p.text } else { p.muted });
-                let resp = widgets::table_header(ui, text, right, |ui| {
+                let resp = widgets::table_header(ui, text, right, key.is_some(), |ui| {
                     if on {
                         let (r, _) = ui.allocate_exact_size(vec2(12.0, 12.0), Sense::hover());
                         let glyph = if page.descending {
@@ -429,6 +429,11 @@ impl AppsPage {
                         widgets::icon(ui, glyph, r.center(), 12.0, p.muted);
                     }
                 });
+                let resp = if key.is_some() {
+                    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+                } else {
+                    resp
+                };
                 if let Some(k) = key
                     && resp.clicked()
                 {
