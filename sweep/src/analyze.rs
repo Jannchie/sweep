@@ -575,7 +575,7 @@ fn node_tooltip(ui: &mut Ui, t: &Tree, n: u32) {
 
 fn types_view(ui: &mut Ui, doc: &Doc, actions: &mut Vec<Action>) {
     let p = Palette::of(ui.ctx());
-    let Some(d) = &doc.derived else {
+    let (Some(d), Some((scope, exts))) = (&doc.derived, doc.type_stats()) else {
         ui.label(
             RichText::new(t!(
                 "正在统计文件类型…",
@@ -587,7 +587,7 @@ fn types_view(ui: &mut Ui, doc: &Doc, actions: &mut Vec<Action>) {
         return;
     };
     let t = &doc.tree;
-    let total = t.value(t.root).max(1);
+    let total = t.value(scope).max(1);
     ui.horizontal(|ui| {
         ui.label(
             RichText::new(t!("文件类型", "File types", "ファイルの種類"))
@@ -614,7 +614,7 @@ fn types_view(ui: &mut Ui, doc: &Doc, actions: &mut Vec<Action>) {
             } else {
                 ui.label(
                     RichText::new({
-                        let n = fmt_count(d.exts.len() as u64);
+                        let n = fmt_count(exts.len() as u64);
                         tf!("{n} 种", "{n} types", "{n} 種類")
                     })
                     .size(12.0)
@@ -623,12 +623,30 @@ fn types_view(ui: &mut Ui, doc: &Doc, actions: &mut Vec<Action>) {
             }
         });
     });
+    // 统计范围：跟随选中的文件夹（选中文件时是它所在的文件夹）。
+    // 整个驱动器（如 `C:\`）用磁盘图标，其余用文件夹。
+    let glyph = if t.name(scope).ends_with(":\\") {
+        Icon::HardDrive
+    } else {
+        Icon::Folder
+    };
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        let (r, _) = ui.allocate_exact_size(vec2(14.0, 16.0), Sense::hover());
+        widgets::icon(ui, glyph, r.center(), 13.0, p.faint);
+        ui.add(
+            egui::Label::new(RichText::new(t.name(scope)).size(12.0).color(p.faint))
+                .truncate()
+                .selectable(false),
+        )
+        .on_hover_text(t.path(scope));
+    });
     ui.add_space(6.0);
     const ROW: f32 = 38.0;
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
-        .show_rows(ui, ROW, d.exts.len(), |ui, range| {
-            for &(ext, size, count) in &d.exts[range] {
+        .show_rows(ui, ROW, exts.len(), |ui, range| {
+            for &(ext, size, count) in &exts[range] {
                 let (rect, resp) =
                     ui.allocate_exact_size(vec2(ui.available_width(), ROW), Sense::click());
                 let on = doc.highlight_ext == Some(ext);

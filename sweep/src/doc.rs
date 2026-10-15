@@ -26,6 +26,16 @@ pub struct Derived {
     pub largest: Vec<u32>,
 }
 
+/// 某个文件夹里按扩展名的汇总，见 [`Doc::type_stats`]。
+pub struct ScopedTypes {
+    pub scope: u32,
+    pub version: u64,
+    pub exts: Vec<ExtStat>,
+}
+
+/// (扩展名下标, 大小, 文件数)。
+pub type ExtStat = (u16, u64, u64);
+
 /// 清理页左栏选中的项目。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CleanupPick {
@@ -78,6 +88,9 @@ pub struct Doc {
     pub derived: Option<Derived>,
     derived_rx: Option<Receiver<Derived>>,
     derived_requested: Option<u64>,
+    /// 文件类型面板跟随选中的文件夹：不是根时在后台单独汇总。
+    scoped: Option<ScopedTypes>,
+    scoped_rx: Option<Receiver<ScopedTypes>>,
     pub suggestions: Option<Vec<Suggestion>>,
     /// 清理页：左栏选中的项目，以及右栏里勾选的条目（路径）。
     pub cleanup_pick: CleanupPick,
@@ -136,6 +149,8 @@ impl Doc {
             derived: None,
             derived_rx: None,
             derived_requested: None,
+            scoped: None,
+            scoped_rx: None,
             suggestions: None,
             cleanup_pick: CleanupPick::Largest,
             cleanup_checked: HashSet::new(),
@@ -170,6 +185,7 @@ impl Doc {
         if self.derived_requested != Some(self.version) && self.derived_rx.is_none() {
             self.spawn_derived(ctx);
         }
+        self.poll_scoped(ctx);
         if let Some(rx) = &self.suggest_rx
             && let Ok(s) = rx.try_recv()
         {
@@ -242,6 +258,70 @@ impl Doc {
             .expect("spawn derived");
         self.derived_rx = Some(rx);
         self.derived_requested = Some(version);
+    }
+
+    /// 文件类型面板统计的文件夹：选中一个文件夹时是它，选中一个文件时是它所在的文件夹，
+    /// 其他情况（没选、多选）是根。
+    pub fn types_scope(&self) -> u32 {
+        let t = &self.tree;
+        match self.selection.single() {
+            Some(n) if t.node(n).is_dir() => n,
+            Some(n) if t.node(n).parent != NONE => t.node(n).parent,
+            _ => t.root,
+        }
+    }
+
+    /// 文件类型面板的数据：(统计的文件夹, 按扩展名的汇总)。换了文件夹、新结果还没算好时先给上一份，
+    /// 免得面板闪成空白；返回的文件夹总与数据对应。
+    pub fn type_stats(&self) -> Option<(u32, &[ExtStat])> {
+        let scope = self.types_scope();
+        let root = (
+            self.tree.root,
+            self.derived.as_ref().map(|d| d.exts.as_slice()),
+        );
+        if scope == self.tree.root {
+            return root.1.map(|e| (root.0, e));
+        }
+        let alive = |s: &ScopedTypes| !self.tree.node(s.scope).has(flags::DELETED);
+        match &self.scoped {
+            Some(s) if alive(s) => Some((s.scope, s.exts.as_slice())),
+            _ => root.1.map(|e| (root.0, e)),
+        }
+    }
+
+    fn poll_scoped(&mut self, ctx: &egui::Context) {
+        if let Some(rx) = &self.scoped_rx
+            && let Ok(s) = rx.try_recv()
+        {
+            self.scoped_rx = None;
+            self.scoped = Some(s);
+        }
+        let scope = self.types_scope();
+        let current = self.scoped.as_ref().map(|s| (s.scope, s.version));
+        if scope == self.tree.root
+            || self.scoped_rx.is_some()
+            || current == Some((scope, self.version))
+        {
+            return;
+        }
+        let (tx, rx) = channel();
+        let tree = self.tree.clone();
+        let ctx = ctx.clone();
+        let version = self.version;
+        std::thread::Builder::new()
+            .name("types".into())
+            .spawn(move || {
+                let exts = tree.ext_stats(scope);
+                drop(tree);
+                let _ = tx.send(ScopedTypes {
+                    scope,
+                    version,
+                    exts,
+                });
+                ctx.request_repaint();
+            })
+            .expect("spawn types");
+        self.scoped_rx = Some(rx);
     }
 
     /// 清理页打开时调用：数据变过就重新计算清理建议。
