@@ -77,7 +77,7 @@ fn user_totals(t: &Tree, i: u32) -> (u64, u64) {
     (size, files)
 }
 
-fn count(t: &Tree, flag: u8) -> usize {
+fn count(t: &Tree, flag: u16) -> usize {
     t.nodes
         .iter()
         .filter(|n| n.has(flag) && !n.has(flags::DELETED))
@@ -119,7 +119,7 @@ fn compare_dir(dir: &str) {
         return;
     };
     let collect =
-        |t: &Tree, root: u32| -> std::collections::BTreeMap<String, (u64, u64, u32, u8)> {
+        |t: &Tree, root: u32| -> std::collections::BTreeMap<String, (u64, u64, u32, u16)> {
             t.bfs(root)
                 .into_iter()
                 .map(|i| {

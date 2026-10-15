@@ -8,7 +8,7 @@ use eframe::egui::{
     Sense, Stroke, Ui, UiBuilder, pos2, vec2,
 };
 use egui_extras::{Column, TableBuilder};
-use sweep_scan::{NONE, Tree, flags, t, tf};
+use sweep_scan::{NONE, Node, Tree, flags, t, tf};
 
 use crate::doc::Doc;
 use crate::file_icons::{self, FileIcons};
@@ -455,6 +455,9 @@ fn name_cell(
             if node.has(flags::REPARSE) && node.is_dir() && node.first_child == NONE {
                 widgets::status_chip(ui, t!("链接", "Link", "リンク"), p.muted);
             }
+            if let Some(label) = cloud_label(node) {
+                widgets::status_chip(ui, label, p.muted);
+            }
             if flat {
                 let parent = node.parent;
                 if parent != NONE {
@@ -490,6 +493,17 @@ fn share_cell(ui: &mut Ui, part: u64, whole: u64) {
         FontId::proportional(12.0),
         p.muted,
     );
+}
+
+/// 云端占位文件的标签：本地没有占用是"仅在云端"，下载了一部分是"部分在云端"。
+fn cloud_label(node: &Node) -> Option<&'static str> {
+    (node.has(flags::CLOUD) && !node.is_dir()).then(|| {
+        if node.alloc == 0 {
+            t!("仅在云端", "Online-only", "オンライン専用")
+        } else {
+            t!("部分在云端", "Partly online", "一部オンライン")
+        }
+    })
 }
 
 fn node_tooltip(ui: &mut Ui, t: &Tree, n: u32) {
@@ -533,6 +547,17 @@ fn node_tooltip(ui: &mut Ui, t: &Tree, n: u32) {
         .size(12.5)
         .color(p.muted),
     );
+    if cloud_label(node).is_some() {
+        ui.label(
+            RichText::new(t!(
+                "云端文件的占位：内容在云端，本地只占用上面的占用空间。按「占用空间」统计时只计本地这部分。",
+                "A cloud file placeholder: its content lives online and only the size on disk above is stored locally. Counting by Size on disk includes only the local part.",
+                "クラウド ファイルのプレースホルダーです。内容はオンラインにあり、ローカルには上のディスク上のサイズだけが保存されています。「ディスク上のサイズ」で集計すると、ローカルの分だけが数えられます。"
+            ))
+            .size(12.0)
+            .color(p.faint),
+        );
+    }
     if node.has(flags::HARDLINK) {
         ui.label(
             RichText::new(t!(

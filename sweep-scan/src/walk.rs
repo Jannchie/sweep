@@ -66,8 +66,8 @@ impl Raw {
     }
 
     /// 节点标记；`dup` 为硬链接的非首个名字。
-    pub fn flags(&self, dup: bool) -> u8 {
-        let mut f = 0u8;
+    pub fn flags(&self, dup: bool) -> u16 {
+        let mut f = 0u16;
         if self.is_dir() {
             f |= flags::DIR;
         }
@@ -82,6 +82,10 @@ impl Raw {
         }
         if dup {
             f |= flags::HARDLINK;
+        }
+        // 与 Tree::finish 相同：本地已经存着全部内容的不算。
+        if flags::cloud(self.attrs) && self.alloc < self.size {
+            f |= flags::CLOUD;
         }
         f
     }
@@ -400,6 +404,35 @@ mod tests {
         assert_eq!(s(long_path(r"\\nas\share")), r"\\?\UNC\nas\share");
         assert_eq!(s(join(&long_path(r"C:\"), "Windows")), r"\\?\C:\Windows");
         assert_eq!(s(join(&long_path(r"C:\a"), "b")), r"\\?\C:\a\b");
+    }
+
+    /// 云端占位文件：带 CLOUD 标记，大小照常，占用是本地实际分配（这里为 0）。
+    #[test]
+    fn marks_cloud_placeholders() {
+        let raw = |attrs: u32, alloc: u64| Raw {
+            name: "a.docx".into(),
+            attrs,
+            size: 1 << 20,
+            alloc,
+            mtime: 1,
+            id: 1,
+            tag: 0,
+        };
+        // FILE_ATTRIBUTE_ARCHIVE | REPARSE_POINT | SPARSE_FILE | RECALL_ON_DATA_ACCESS，OneDrive 仅在云端的文件。
+        let online = raw(0x20 | 0x400 | 0x200 | 0x40_0000, 0).entry(false);
+        assert_ne!(online.flags & flags::CLOUD, 0);
+        assert_eq!((online.size, online.alloc), (1 << 20, 0));
+        // 已下载到本地的文件不带这些属性；带着旧属性但本地已经存全了的也不算。
+        let local = raw(0x20, 1 << 20).entry(false);
+        assert_eq!(local.flags & flags::CLOUD, 0);
+        let stale = raw(0x40_0000, 1 << 20).entry(false);
+        assert_eq!(stale.flags & flags::CLOUD, 0);
+        // 硬链接的其他名字照旧记 0，云标记仍保留。
+        let dup = raw(0x1000, 0).entry(true);
+        assert_eq!(
+            dup.flags & (flags::CLOUD | flags::HARDLINK),
+            flags::CLOUD | flags::HARDLINK
+        );
     }
 
     /// 在临时目录里造一棵小树（含硬链接与目录联接）扫一遍。

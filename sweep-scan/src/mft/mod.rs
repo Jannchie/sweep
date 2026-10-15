@@ -700,6 +700,9 @@ fn build(
                     if it.attributes & FA_REPARSE != 0 {
                         n.flags |= flags::REPARSE;
                     }
+                    if flags::cloud(it.attributes) {
+                        n.flags |= flags::CLOUD;
+                    }
                 }
                 if base < FIRST_USER_RECORD && base != ROOT_RECORD {
                     n.flags |= flags::META;

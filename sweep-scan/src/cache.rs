@@ -9,7 +9,8 @@ use std::path::PathBuf;
 
 use crate::tree::{Entry, NONE, Tree, flags};
 
-const MAGIC: &[u8; 8] = b"SWEEPC01";
+// 02：标记从 u8 扩到 u16（加了 CLOUD），按变长整数存。
+const MAGIC: &[u8; 8] = b"SWEEPC02";
 const LEVEL: i32 = 3;
 
 /// 缓存对应的扫描状态。
@@ -157,7 +158,7 @@ pub fn save(tree: &Tree, ids: &[u64], meta: &Meta) -> io::Result<u64> {
         };
         parents.var(p - last_parent);
         last_parent = p;
-        fl.0.push(n.flags & !flags::DELETED);
+        fl.var(u64::from(n.flags & !flags::DELETED));
         // 目录只存结构，大小由载入后的汇总得出。
         let (size, alloc) = if n.is_dir() {
             (0, 0)
@@ -234,7 +235,7 @@ pub fn load(target: &str) -> io::Result<(Meta, Tree, Vec<u64>)> {
 
     let [
         mut parents,
-        fl,
+        mut fl,
         mut sizes,
         mut allocs,
         mut mtimes,
@@ -242,13 +243,14 @@ pub fn load(target: &str) -> io::Result<(Meta, Tree, Vec<u64>)> {
         mut exts,
         mut names,
     ] = std::array::from_fn(|k| Reader(parts[k + 1]));
-    if fl.0.len() != count {
+    if fl.0.len() < count {
         return Err(corrupt());
     }
     let mut tree = Tree::with_capacity(&meta_target, count, names.0.len());
     let mut ids = Vec::with_capacity(count);
     let mut parent = 0u64;
-    for (k, &f) in fl.0.iter().enumerate() {
+    for k in 0..count {
+        let f = u16::try_from(fl.var()?).map_err(|_| corrupt())?;
         parent += parents.var()?;
         let e = Entry {
             size: sizes.var()?,
@@ -334,7 +336,7 @@ mod tests {
                 size: 5000,
                 alloc: 8192,
                 mtime: 9,
-                flags: flags::HIDDEN,
+                flags: flags::HIDDEN | flags::CLOUD,
             },
         );
         t.push(

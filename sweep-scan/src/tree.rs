@@ -10,19 +10,31 @@ use std::collections::HashMap;
 pub const NONE: u32 = u32::MAX;
 
 pub mod flags {
-    pub const DIR: u8 = 1;
+    pub const DIR: u16 = 1;
     /// 硬链接的另一个名字。大小只算在第一个名字上，这里大小为 0。
-    pub const HARDLINK: u8 = 2;
+    pub const HARDLINK: u16 = 2;
     /// 重解析点（目录联接、符号链接、云文件占位符等）。目录型的不会进入。
-    pub const REPARSE: u8 = 4;
+    pub const REPARSE: u16 = 4;
     /// NTFS 元文件（$MFT、$LogFile、$Extend 下的 $UsnJrnl 等），只读展示，不能删除。
-    pub const META: u8 = 8;
-    pub const HIDDEN: u8 = 16;
-    pub const SYSTEM: u8 = 32;
+    pub const META: u16 = 8;
+    pub const HIDDEN: u16 = 16;
+    pub const SYSTEM: u16 = 32;
     /// 没有权限列出内容，大小不完整。
-    pub const DENIED: u8 = 64;
+    pub const DENIED: u16 = 64;
     /// 已从树上摘除（删除或被重新扫描替换）。
-    pub const DELETED: u8 = 128;
+    pub const DELETED: u16 = 128;
+    /// OneDrive 等云文件的占位：内容（全部或部分）只在云端。`alloc` 是本地实际占用，通常为 0。
+    pub const CLOUD: u16 = 256;
+
+    /// 由文件属性判断是否可能为云端占位：RECALL_ON_DATA_ACCESS（读内容时才下载）、
+    /// RECALL_ON_OPEN（打开时才下载）或 OFFLINE（内容不在本地）。
+    /// MFT 里的属性在文件下载完后可能还没更新，所以还要看本地占用是否小于文件大小，见 [`super::Tree::finish`]。
+    pub fn cloud(attributes: u32) -> bool {
+        const OFFLINE: u32 = 0x1000;
+        const RECALL_ON_OPEN: u32 = 0x4_0000;
+        const RECALL_ON_DATA_ACCESS: u32 = 0x40_0000;
+        attributes & (OFFLINE | RECALL_ON_OPEN | RECALL_ON_DATA_ACCESS) != 0
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -44,7 +56,7 @@ pub struct Node {
     name_len: u16,
     /// 扩展名在 [`Tree::exts`] 里的下标，0 表示没有扩展名（目录也是 0）。
     pub ext: u16,
-    pub flags: u8,
+    pub flags: u16,
 }
 
 impl Node {
@@ -52,7 +64,7 @@ impl Node {
         self.flags & flags::DIR != 0
     }
 
-    pub fn has(&self, flag: u8) -> bool {
+    pub fn has(&self, flag: u16) -> bool {
         self.flags & flag != 0
     }
 }
@@ -74,7 +86,7 @@ pub struct Entry {
     pub size: u64,
     pub alloc: u64,
     pub mtime: u64,
-    pub flags: u8,
+    pub flags: u16,
 }
 
 impl Tree {
@@ -263,7 +275,12 @@ impl Tree {
         let order = self.bfs(self.root);
         // 逆 BFS 序就是"子节点先于父节点"，一趟就能汇总完。
         for &i in order.iter().rev() {
-            let n = self.nodes[i as usize];
+            let n = &mut self.nodes[i as usize];
+            // 本地已经存着全部内容的不算云端占位（属性可能是下载前的旧值）。
+            if n.has(flags::CLOUD) && !n.is_dir() && n.alloc >= n.size {
+                n.flags &= !flags::CLOUD;
+            }
+            let n = *n;
             if n.parent == NONE || n.has(flags::DELETED) {
                 continue;
             }
@@ -668,6 +685,40 @@ fn contains_ascii_ci(hay: &[u8], needle: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cloud_attributes() {
+        assert!(flags::cloud(0x40_0000)); // RECALL_ON_DATA_ACCESS
+        assert!(flags::cloud(0x4_0000)); // RECALL_ON_OPEN
+        assert!(flags::cloud(0x1000)); // OFFLINE
+        assert!(!flags::cloud(0x20 | 0x400 | 0x200)); // 普通的稀疏重解析文件
+        assert!(!flags::cloud(0x8_0000)); // PINNED：已固定在本地
+    }
+
+    /// 汇总时去掉本地已经存全的文件上残留的云端标记。
+    #[test]
+    fn finish_clears_stale_cloud_flags() {
+        let mut t = Tree::new(r"X:\");
+        let e = |size, alloc| Entry {
+            size,
+            alloc,
+            flags: flags::CLOUD,
+            ..Default::default()
+        };
+        let online = t.push(t.root, "online.jpg", e(5000, 0));
+        let partial = t.push(t.root, "partial.mp4", e(1 << 20, 4096));
+        let local = t.push(t.root, "local.jpg", e(5000, 8192));
+        t.finish();
+        assert!(t.node(online).has(flags::CLOUD));
+        assert!(t.node(partial).has(flags::CLOUD));
+        assert!(!t.node(local).has(flags::CLOUD));
+        assert_eq!(t.node(t.root).alloc, 4096 + 8192);
+    }
+
+    #[test]
+    fn node_stays_compact() {
+        assert_eq!(size_of::<Node>(), 56);
+    }
 
     fn file(size: u64) -> Entry {
         Entry {
