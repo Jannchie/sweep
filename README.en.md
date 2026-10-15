@@ -16,7 +16,7 @@ Compared with WinDirStat:
 - Scanning, file type statistics, treemap layout and cleanup suggestions run on background threads, so the window stays responsive; during a folder walk, the sizes of the top-level folders update live.
 - After a deletion or rescan, only the affected part of the tree is updated; there is no need to rescan the drive.
 - Incremental scans: scanning the same NTFS drive again loads the previous result and updates only the folders that changed since, as recorded in the USN change journal. On the C: drive above this takes 1.6 s instead of 5.5 s; when the journal no longer covers the gap, a full scan runs instead.
-- Items are ranked by size on disk by default, so cloud placeholders, compressed and sparse files count as the space you get back by deleting them; hard links are counted once.
+- Items are ranked by size on disk by default, so cloud placeholders, compressed and sparse files count as the space you get back by deleting them; hard links are counted once. Files that are only in the cloud (OneDrive and similar) are labeled "Online-only" in the tree.
 - The Clean up page lists common places to reclaim space: temporary files, browser caches, npm / Yarn / pnpm / pip / uv / Cargo / NuGet / Gradle / Hugging Face caches, node_modules and the Recycle Bin.
 - The Apps page lists installed programs and Store apps, sorted by the actual size of their install folders. Select several and uninstall them in one go: apps with a registered quiet uninstall command, MSI, Inno Setup and NSIS installs, and Store apps are removed silently without their uninstall wizard; the rest open their own wizard.
 - Near-zero CPU while idle: the window repaints only when data or input changes.
@@ -40,7 +40,7 @@ Without arguments, click a drive on the Drives page to scan it, or use "Choose f
 
 ## Common tasks
 
-- **Find large folders**: the tree is sorted by size, and the "% of parent" column shows each item's share of its folder. Double-click the treemap to zoom into a folder and press Backspace to go up; click a file type on the right to highlight it in the treemap. Press Ctrl+F to search by name.
+- **Find large folders**: the tree is sorted by size, and the "% of parent" column shows each item's share of its folder. Double-click the treemap to zoom into a folder and press Backspace to go up; file type statistics follow the folder selected in the tree, and clicking a file type on the right highlights it in the treemap. Press Ctrl+F to search by name.
 - **Clean caches**: open the Clean up page and pick "Large files" or a place to clean up on the left; the right side lists the folders and files inside with their sizes. Move all of them, or only the ones you check, to the Recycle Bin or delete them permanently; Sweep lists everything before deleting.
 - **Delete to the Recycle Bin**: select an item in the tree or treemap and press Delete to move it to the Recycle Bin, or Shift+Delete to delete it permanently; both are also on the context menu. Recycled files still use disk space until the Recycle Bin is emptied.
 - **When files are in use**: for anything that can't be deleted, Sweep finds the programs using it (open files, loaded DLLs, or a terminal whose working directory is inside the folder) and offers to end them and retry. Critical system processes and File Explorer are never ended.
